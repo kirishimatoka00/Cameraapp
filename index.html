@@ -3,57 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI True HDR (Tone Mapping)</title>
+    <title>AI Adaptive HDR Camera</title>
     <style>
-        /* 介面佈局：確保在任何手機上都不跑版 */
         body { margin: 0; background: #000; font-family: -apple-system, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
+        /* 頂部資訊列 */
         .top-bar { 
-            background: #111; padding: 10px 15px; flex-shrink: 0; z-index: 20;
+            background: rgba(20,20,20,0.9); padding: 10px 15px; flex-shrink: 0; z-index: 20;
             display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333;
             padding-top: max(10px, env(safe-area-inset-top));
         }
         
-        select { background: #222; color: #fff; border: 1px solid #555; padding: 6px 10px; border-radius: 6px; font-size: 13px; max-width: 45%; }
+        select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 13px; max-width: 120px; }
         
-        .status { font-size: 12px; color: #aaa; font-family: monospace; }
-        .status.active { color: #00ff88; font-weight: bold; }
+        .hdr-status {
+            font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 4px;
+            transition: 0.3s; text-transform: uppercase;
+        }
+        .hdr-on { background: #ffaa00; color: #000; box-shadow: 0 0 10px rgba(255, 170, 0, 0.4); }
+        .hdr-off { background: #333; color: #888; }
 
+        /* 視窗與分析儀 */
         .viewport { 
             flex-grow: 1; position: relative; background: #000; overflow: hidden;
             display: flex; justify-content: center; align-items: center; 
         }
         video { width: 100%; height: 100%; object-fit: contain; }
 
-        /* HUD: 顯示曝光分析數據 */
-        #hud {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(0,0,0,0.7); padding: 8px 15px; border-radius: 20px;
-            display: none; align-items: center; gap: 10px; border: 1px solid #555; pointer-events: none;
+        /* 動態範圍分析儀 HUD */
+        #analyzer-hud {
+            position: absolute; bottom: 20px; left: 20px; 
+            background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px;
+            display: flex; flex-direction: column; gap: 5px; pointer-events: none;
+            backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.1);
         }
-        .hud-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
-        .hud-dot.ok { background: #00ff88; box-shadow: 0 0 5px #00ff88; }
-        .hud-text { font-size: 12px; color: #fff; }
+        .hud-label { font-size: 10px; color: #aaa; text-transform: uppercase; }
+        .hud-bar-bg { width: 120px; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+        .hud-bar-fill { height: 100%; background: linear-gradient(90deg, #00ff88, #ffaa00, #ff4444); width: 0%; transition: width 0.2s; }
+        .hud-value { font-size: 12px; font-family: monospace; font-weight: bold; color: #fff; }
 
+        /* 處理中遮罩 */
+        #proc-mask {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
+            display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top-color: #ffaa00; border-radius: 50%; animation: spin 1s infinite linear; }
+        
         /* 底部控制區 */
         .controls { 
             background: #111; padding: 15px 20px; flex-shrink: 0; z-index: 20;
-            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 15px; align-items: center;
+            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 12px; align-items: center;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
-        /* 參數滑桿 */
+        /* 參數滑桿組 */
         .slider-group { width: 100%; display: flex; flex-direction: column; gap: 8px; }
         .slider-row { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: bold; }
-        .label { width: 50px; color: #aaa; }
+        .label { width: 60px; color: #aaa; text-align: right; }
+        
         input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #444; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
         
-        /* 顏色區分 */
-        .accent-hdr { color: #ffaa00; }
-        .accent-hdr input { accent-color: #ffaa00; }
-        .accent-ev { color: #00d2ff; }
-        .accent-ev input { accent-color: #00d2ff; }
+        .ac-hdr input { accent-color: #ffaa00; }
+        .ac-zoom input { accent-color: #00ff88; }
+        .ac-aperture input { accent-color: #00d2ff; }
 
         /* 快門 */
         .shutter {
@@ -61,81 +74,90 @@
             border: 4px solid rgba(255,255,255,0.2);
             background: radial-gradient(circle, #fff 30%, #ffaa00 100%);
             cursor: pointer; transition: 0.1s; position: relative;
-            box-shadow: 0 0 20px rgba(255, 170, 0, 0.3);
+            box-shadow: 0 0 20px rgba(255, 170, 0, 0.2);
+            margin-top: 5px;
         }
         .shutter:active { transform: scale(0.9); }
         
-        /* 運算中的遮罩 */
-        #processing-mask {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.8); z-index: 50;
-            display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
-        }
-        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top-color: #ffaa00; border-radius: 50%; animation: spin 1s infinite linear; }
-        .proc-text { color: #ffaa00; font-weight: bold; font-size: 14px; }
-
         @keyframes spin { 100% { transform: rotate(360deg); } }
         canvas { display: none; }
     </style>
 </head>
 <body>
 
+    <!-- 銳化濾鏡 -->
+    <svg style="width:0;height:0;position:absolute;">
+        <defs><filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter></defs>
+    </svg>
+
     <div class="top-bar">
         <select id="cameraSelect"><option>Loading...</option></select>
-        <div id="status" class="status">HDR Ready</div>
+        <div id="hdrStatusBadge" class="hdr-status hdr-off">Auto HDR</div>
+        <!-- 開關 -->
+        <div style="font-size:12px; display:flex; align-items:center; gap:5px;">
+            <input type="checkbox" id="hdrToggle" checked> <span>啟用</span>
+        </div>
     </div>
 
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
         
-        <!-- 即時曝光分析 HUD -->
-        <div id="hud">
-            <div id="hud-dot" class="hud-dot"></div>
-            <div id="hud-text" class="hud-text">Analyzing Exposure...</div>
+        <!-- 場景分析儀 HUD -->
+        <div id="analyzer-hud">
+            <div class="hud-label">SCENE CONTRAST</div>
+            <div class="hud-bar-bg"><div id="dr-bar" class="hud-bar-fill"></div></div>
+            <div class="hud-value"><span id="dr-val">0</span>% <span id="dr-msg" style="color:#aaa; font-weight:normal">(Analyzing)</span></div>
         </div>
 
-        <!-- 處理遮罩 -->
-        <div id="processing-mask">
+        <div id="proc-mask">
             <div class="spinner"></div>
-            <div id="proc-msg" class="proc-text">正在分析場景光線...</div>
+            <div id="proc-msg" style="color:#ffaa00; font-weight:bold;">Processing...</div>
         </div>
     </div>
 
     <div class="controls">
         <div class="slider-group">
-            <!-- HDR 強度滑桿 -->
-            <div class="slider-row accent-hdr">
-                <span class="label">強度</span>
+            <!-- HDR 強度 -->
+            <div class="slider-row ac-hdr">
+                <span class="label">HDR 強度</span>
                 <input type="range" id="strengthSlider" min="0" max="100" value="70">
-                <span style="width:30px; text-align:right">70%</span>
             </div>
-            <!-- EV 範圍滑桿 -->
-            <div class="slider-row accent-ev">
-                <span class="label">範圍</span>
-                <input type="range" id="evRangeSlider" min="1.0" max="3.0" step="0.5" value="2.0">
-                <span id="evDisplay" style="width:30px; text-align:right">±2</span>
+            <!-- 光圈 (模擬 EV) -->
+            <div class="slider-row ac-aperture">
+                <span class="label">光圈 f/</span>
+                <input type="range" id="apertureSlider" min="-3" max="3" step="0.5" value="0">
+            </div>
+            <!-- 變焦 -->
+            <div class="slider-row ac-zoom">
+                <span class="label">Zoom</span>
+                <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
             </div>
         </div>
 
-        <div class="shutter" onclick="startHDRCapture()"></div>
+        <div class="shutter" onclick="smartCapture()"></div>
     </div>
 
-    <!-- 畫布區 -->
+    <!-- 運算用 -->
     <canvas id="cLow"></canvas>
     <canvas id="cMid"></canvas>
     <canvas id="cHigh"></canvas>
     <canvas id="cFinal"></canvas>
-    <canvas id="cAnalysis" width="32" height="32"></canvas>
+    <canvas id="cAnalysis" width="64" height="64"></canvas>
 
 <script>
     const video = document.getElementById('videoPreview');
-    const hud = document.getElementById('hud');
-    const hudDot = document.getElementById('hud-dot');
-    const hudText = document.getElementById('hud-text');
-    const procMask = document.getElementById('processing-mask');
+    const hdrBadge = document.getElementById('hdrStatusBadge');
+    const drBar = document.getElementById('dr-bar');
+    const drVal = document.getElementById('dr-val');
+    const drMsg = document.getElementById('dr-msg');
+    const procMask = document.getElementById('proc-mask');
     const procMsg = document.getElementById('proc-msg');
-    
+    const hdrToggle = document.getElementById('hdrToggle');
+
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
+    let sceneDynamicRange = 0; // 0-100
+    let analysisInterval;
 
     // 初始化
     async function init() {
@@ -143,7 +165,6 @@
             const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
             setupCamera(stream);
             
-            // 列出鏡頭
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cams = devices.filter(d => d.kind === 'videoinput');
             const sel = document.getElementById('cameraSelect');
@@ -151,21 +172,21 @@
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `鏡頭 ${i+1}`;
+                opt.text = d.label || `Lens ${i+1}`;
                 sel.appendChild(opt);
             });
-            sel.onchange = e => switchCamera(e.target.value);
-            
-            // 預設切換到後鏡頭
             if(cams.length > 0) switchCamera(cams[cams.length-1].deviceId);
+            sel.onchange = e => switchCamera(e.target.value);
 
-        } catch(e) { alert("相機權限錯誤"); }
+            // 啟動即時分析循環
+            startAnalyzer();
+
+        } catch(e) { alert("請允許相機權限"); }
     }
 
     async function switchCamera(id) {
         if(currentStream) currentStream.getTracks().forEach(t=>t.stop());
         try {
-            // 嘗試 4K
             const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: id }, width: { ideal: 4096 } } });
             setupCamera(s);
         } catch(e) {
@@ -182,138 +203,183 @@
         videoTrack = stream.getVideoTracks()[0];
         if(window.ImageCapture) try{imageCapture = new ImageCapture(videoTrack)}catch(e){}
 
-        // 檢查硬體支援
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        const statusDiv = document.getElementById('status');
         
-        if (caps.exposureCompensation) {
-            hardwareExposure = true;
-            statusDiv.innerText = "Pro HDR (Hard-EV)";
-            statusDiv.classList.add('active');
-            // 限制 EV 滑桿
-            const maxEv = Math.min(Math.abs(caps.exposureCompensation.min), Math.abs(caps.exposureCompensation.max));
-            document.getElementById('evRangeSlider').max = maxEv;
+        // 設定變焦
+        const zs = document.getElementById('zoomSlider');
+        if(caps.zoom) {
+            zs.disabled = false;
+            zs.min = caps.zoom.min;
+            zs.max = Math.min(caps.zoom.max, 8);
+            zs.step = 0.1;
+            zs.value = 1;
+            zs.oninput = function() { videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); }
+        }
+
+        // 設定曝光 (光圈模擬)
+        hardwareExposure = !!caps.exposureCompensation;
+        const as = document.getElementById('apertureSlider');
+        if (hardwareExposure) {
+            // 對應用戶的習慣：滑桿往右(數值大) = 光圈大(變亮) = EV+
+            // 但物理上 f/數值 小 = 光圈大。為了直覺，我們顯示 f/stop 概念但滑桿邏輯是亮度
+            as.disabled = false;
+            as.oninput = function() { 
+                // 直接調整 EV 作為光圈模擬
+                setEV(parseFloat(this.value)); 
+            }
         } else {
-            hardwareExposure = false;
-            statusDiv.innerText = "Simulated HDR";
-            statusDiv.classList.remove('active');
+            as.disabled = true; // 不支援硬體曝光
         }
     }
 
-    // 更新滑桿顯示
-    document.getElementById('evRangeSlider').oninput = function() {
-        document.getElementById('evDisplay').innerText = `±${this.value}`;
+    // ★★★ 核心 1：即時場景分析 (Scene Analyzer) ★★★
+    function startAnalyzer() {
+        if(analysisInterval) clearInterval(analysisInterval);
+        const cvs = document.getElementById('cAnalysis');
+        const ctx = cvs.getContext('2d');
+
+        analysisInterval = setInterval(() => {
+            if(video.readyState !== 4) return;
+            
+            // 1. 抓縮圖 (64x64)
+            ctx.drawImage(video, 0, 0, 64, 64);
+            const data = ctx.getImageData(0, 0, 64, 64).data;
+            
+            // 2. 計算亮度分佈 (Histogram)
+            let minLuma = 255, maxLuma = 0;
+            
+            // 採樣 (每4個點採一次加速)
+            for(let i=0; i<data.length; i+=16) {
+                // Y = 0.299R + 0.587G + 0.114B
+                const luma = data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114;
+                if(luma < minLuma) minLuma = luma;
+                if(luma > maxLuma) maxLuma = luma;
+            }
+
+            // 3. 計算動態範圍分數 (0-100)
+            // 差異越大，代表場景反差越大 (如逆光)
+            sceneDynamicRange = Math.round(((maxLuma - minLuma) / 255) * 100);
+
+            // 4. 更新 UI
+            drBar.style.width = `${sceneDynamicRange}%`;
+            drVal.innerText = sceneDynamicRange;
+            
+            // 5. 決策邏輯
+            const isHDREnabled = hdrToggle.checked;
+            // 閾值：如果反差 > 60%，判定為高反差場景
+            if (isHDREnabled && sceneDynamicRange > 60) {
+                drMsg.innerText = "(High Contrast)";
+                hdrBadge.className = "hdr-status hdr-on";
+                hdrBadge.innerText = "HDR: ON (3-Shot)";
+                drBar.style.background = "linear-gradient(90deg, #ffaa00, #ff4444)";
+            } else if (isHDREnabled) {
+                drMsg.innerText = "(Normal)";
+                hdrBadge.className = "hdr-status hdr-off";
+                hdrBadge.innerText = "HDR: Auto-Off"; // 雖然開著，但場景不需要
+                drBar.style.background = "#00ff88";
+            } else {
+                hdrBadge.className = "hdr-status hdr-off";
+                hdrBadge.innerText = "HDR: Disabled";
+            }
+
+        }, 500); // 每 0.5 秒分析一次
     }
 
-    // ★★★ 核心：HDR 拍攝流程 ★★★
-    async function startHDRCapture() {
+    // ★★★ 核心 2：智慧拍攝 (Smart Capture) ★★★
+    async function smartCapture() {
         procMask.style.display = 'flex';
-        hud.style.display = 'flex';
         
-        const evRange = parseFloat(document.getElementById('evRangeSlider').value);
+        // 讀取當前設定 (光圈偏移量)
+        const baseEV = parseFloat(document.getElementById('apertureSlider').value);
         const strength = parseInt(document.getElementById('strengthSlider').value) / 100;
-
-        let frameLow, frameMid, frameHigh;
+        const isHDREnabled = hdrToggle.checked;
+        const needsHDR = sceneDynamicRange > 60; // 根據分析結果決定
 
         try {
-            // 1. 拍攝基準圖 (EV 0)
-            procMsg.innerText = "1/3 拍攝基準 (EV 0)...";
-            await setEV(0);
-            await waitStableExposure(0); // 等待亮度穩定
-            frameMid = await grab();
+            if (isHDREnabled && needsHDR) {
+                // [方案 A] 高反差：觸發包圍曝光
+                procMsg.innerText = "偵測到高反差... 啟動 HDR 合成";
+                
+                // 1. 基準 (EV + Base)
+                await setEV(baseEV);
+                await sleep(150);
+                const mid = await grab();
 
-            // 2. 拍攝暗圖 (EV -Range) -> 抓亮部
-            procMsg.innerText = `2/3 拍攝高光 (EV -${evRange})...`;
-            await setEV(-evRange);
-            await waitStableExposure(-1); // 等待變暗
-            frameLow = await grab();
+                // 2. 暗部 (EV + Base + 2.0)
+                await setEV(baseEV + 2.0);
+                await sleep(150);
+                const high = await grab();
 
-            // 3. 拍攝亮圖 (EV +Range) -> 抓陰影
-            procMsg.innerText = `3/3 拍攝暗部 (EV +${evRange})...`;
-            await setEV(evRange);
-            await waitStableExposure(1); // 等待變亮
-            frameHigh = await grab();
+                // 3. 亮部 (EV + Base - 2.0)
+                await setEV(baseEV - 2.0);
+                await sleep(150);
+                const low = await grab();
 
-            // 4. 合成運算
-            procMsg.innerText = "正在進行 Tone Mapping...";
-            await processHDR(frameLow, frameMid, frameHigh, strength);
+                // 4. 合成
+                await processHDR(low, mid, high, strength);
+
+            } else {
+                // [方案 B] 一般場景：單張拍攝 (如果有設定光圈EV，還是要應用)
+                procMsg.innerText = "拍攝中...";
+                await setEV(baseEV);
+                await sleep(100);
+                const single = await grab();
+                
+                // 應用一點銳化
+                applySharpen(single);
+                save(single, "Photo");
+            }
 
         } catch(e) {
             console.error(e);
-            alert("拍攝失敗: " + e.message);
+            alert("拍攝錯誤");
         } finally {
-            setEV(0); // 復原
+            // 恢復原本的光圈/EV設定
+            setEV(baseEV);
             procMask.style.display = 'none';
-            hud.style.display = 'none';
         }
     }
 
-    // 等待曝光穩定的智慧鎖
-    async function waitStableExposure(targetTrend) {
-        if (!hardwareExposure) return; // 沒硬體就不用等
+    // HDR 合成演算法 (Darken/Lighten)
+    async function processHDR(low, mid, high, strength) {
+        const canvas = document.getElementById('cFinal');
+        canvas.width = mid.width; canvas.height = mid.height;
+        const ctx = canvas.getContext('2d');
+
+        // 1. 底圖
+        ctx.drawImage(mid, 0, 0);
+
+        // 2. 疊加欠曝圖 (救天空) - Darken
+        ctx.globalCompositeOperation = 'darken';
+        ctx.globalAlpha = strength;
+        ctx.drawImage(low, 0, 0);
+
+        // 3. 疊加過曝圖 (救陰影) - Lighten
+        ctx.globalCompositeOperation = 'lighten';
+        ctx.globalAlpha = strength;
+        ctx.drawImage(high, 0, 0);
+
+        // 4. Tone Mapping (Soft Light 增強對比)
+        ctx.globalCompositeOperation = 'soft-light';
+        ctx.globalAlpha = 0.4; // 固定增強
+        ctx.drawImage(mid, 0, 0);
+
+        // 5. 輸出
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
         
-        hudText.innerText = "等待曝光調整...";
-        hudDot.className = "hud-dot";
-
-        const baseLuma = await getAverageLuma();
-        let retries = 0;
-        const maxRetries = 15; // 最多等 1.5 秒
-
-        return new Promise(async resolve => {
-            const check = async () => {
-                const currentLuma = await getAverageLuma();
-                let isStable = false;
-
-                if (targetTrend === 0) {
-                    // EV 0: 不需要比較，只要稍微等一下
-                    if(retries > 2) isStable = true;
-                } else if (targetTrend < 0) {
-                    // 變暗: 當前亮度 < 基準亮度 * 0.8
-                    if (currentLuma < baseLuma * 0.85) isStable = true;
-                } else {
-                    // 變亮: 當前亮度 > 基準亮度 * 1.2
-                    if (currentLuma > baseLuma * 1.15) isStable = true;
-                }
-
-                if (isStable || retries >= maxRetries) {
-                    hudDot.className = "hud-dot ok";
-                    hudText.innerText = "曝光鎖定!";
-                    resolve();
-                } else {
-                    retries++;
-                    setTimeout(check, 100); // 每 100ms 檢查一次
-                }
-            };
-            check();
-        });
+        applySharpenCanvas(ctx, canvas.width, canvas.height);
+        
+        save(canvas, "SmartHDR");
     }
 
-    async function getAverageLuma() {
-        if (window.ImageCapture && imageCapture) {
-            // 抓縮圖分析
-            try {
-                const bmp = await imageCapture.grabFrame();
-                const cvs = document.getElementById('cAnalysis');
-                const ctx = cvs.getContext('2d');
-                ctx.drawImage(bmp, 0, 0, 32, 32);
-                const data = ctx.getImageData(0,0,32,32).data;
-                let sum = 0;
-                for(let i=0; i<data.length; i+=4) {
-                    // Y = 0.299R + 0.587G + 0.114B
-                    sum += data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114;
-                }
-                return sum / (32*32);
-            } catch(e) { return 128; }
-        }
-        return 128; // Fallback
-    }
-
+    // 輔助函式
     async function setEV(val) {
         if(hardwareExposure) {
             try { await videoTrack.applyConstraints({advanced:[{exposureCompensation: val}]}); } catch(e){}
         }
     }
-
+    
     async function grab() {
         if(imageCapture) try{return await imageCapture.grabFrame()}catch(e){}
         const c = document.createElement('canvas'); c.width=video.videoWidth; c.height=video.videoHeight;
@@ -321,55 +387,34 @@
         return c;
     }
 
-    // ★★★ 真 HDR 合成演算法 ★★★
-    async function processHDR(low, mid, high, strength) {
-        const w = mid.width;
-        const h = mid.height;
-        const canvas = document.getElementById('cFinal');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
+    function applySharpenCanvas(ctx, w, h) {
+        const t = document.createElement('canvas'); t.width=w; t.height=h;
+        t.getContext('2d').drawImage(ctx.canvas,0,0);
+        ctx.filter = 'url(#smart-sharpen) contrast(1.05)';
+        ctx.clearRect(0,0,w,h);
+        ctx.drawImage(t,0,0);
+        ctx.filter = 'none';
+    }
+    
+    function applySharpen(sourceCanvas) {
+        const ctx = sourceCanvas.getContext('2d');
+        const w = sourceCanvas.width, h = sourceCanvas.height;
+        const t = document.createElement('canvas'); t.width=w; t.height=h;
+        t.getContext('2d').drawImage(sourceCanvas,0,0);
+        ctx.filter = 'url(#smart-sharpen)';
+        ctx.clearRect(0,0,w,h);
+        ctx.drawImage(t,0,0);
+        ctx.filter = 'none';
+    }
 
-        // 1. 基底
-        ctx.drawImage(mid, 0, 0);
-
-        // 2. 修復高光 (Highlight Recovery)
-        // 使用 'Darken' 模式：只有當「欠曝圖」比「基準圖」暗的時候才取代。
-        // 這能完美把過曝死白的天空換成有細節的藍天，但完全不影響原本就暗的地面。
-        ctx.globalCompositeOperation = 'darken';
-        ctx.globalAlpha = strength; // 由滑桿控制強度
-        ctx.drawImage(low, 0, 0);
-
-        // 3. 修復陰影 (Shadow Recovery)
-        // 使用 'Lighten' 模式：只有當「過曝圖」比「目前結果」亮的時候才取代。
-        // 這能把死黑的陰影提亮，但完全不影響原本就亮的天空。
-        ctx.globalCompositeOperation = 'lighten';
-        ctx.globalAlpha = strength; 
-        ctx.drawImage(high, 0, 0);
-
-        // 4. Local Tone Mapping (模擬人眼對比)
-        // 使用 'Overlay' 疊加一層模糊的反轉遮罩，這是經典的 Unsharp Mask 增強法
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = 0.3; // 固定 30% 增加通透感
-        
-        // 製作一個對比增強層
-        const tempCvs = document.createElement('canvas');
-        tempCvs.width = w; tempCvs.height = h;
-        const tCtx = tempCvs.getContext('2d');
-        tCtx.drawImage(mid, 0, 0);
-        tCtx.filter = 'contrast(1.5) saturate(0)'; // 高對比黑白
-        tCtx.drawImage(tempCvs, 0, 0); 
-        
-        ctx.drawImage(tempCvs, 0, 0);
-
-        // 5. 存檔
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1.0;
-        
+    function save(canvas, prefix) {
         const link = document.createElement('a');
-        link.download = `True_HDR_${Date.now()}.jpg`;
+        link.download = `${prefix}_${Date.now()}.jpg`;
         link.href = canvas.toDataURL('image/jpeg', 0.95);
         link.click();
     }
+    
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     init();
 </script>
