@@ -3,55 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Camera (Gemini 2.5 Flash)</title>
+    <title>AI Camera (Zoom 1-8x)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, sans-serif; color: white; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
         
-        /* 頂部控制列 */
-        .top-bar { 
-            background: rgba(20, 20, 30, 0.95); padding: 15px; border-bottom: 1px solid #444; 
-            display: flex; flex-direction: column; gap: 12px; z-index: 20;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        /* 頂部控制面板 */
+        .top-panel { 
+            background: rgba(20, 20, 25, 0.95); padding: 10px; border-bottom: 1px solid #333; 
+            display: flex; flex-direction: column; gap: 8px; z-index: 20;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
         }
         
-        .row { display: flex; gap: 10px; width: 100%; align-items: center; }
-        .label { font-size: 12px; color: #aaa; width: 60px; }
+        .control-row { display: flex; gap: 10px; align-items: center; }
+        .label { font-size: 12px; color: #aaa; width: 40px; white-space: nowrap; }
         
-        /* 輸入框與選單 */
-        .api-input { flex-grow: 1; padding: 10px; background: #111; border: 1px solid #555; color: #0f0; border-radius: 6px; font-family: monospace; }
-        select { flex-grow: 1; padding: 10px; background: #003366; border: 1px solid #00aaff; color: #fff; border-radius: 6px; font-weight: bold; }
+        select, input { 
+            flex-grow: 1; padding: 8px; border-radius: 5px; border: 1px solid #555; 
+            background: #111; color: white; font-size: 13px; outline: none;
+        }
         
-        button { padding: 10px 15px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; white-space: nowrap; transition: 0.2s;}
-        .btn-scan { background: linear-gradient(135deg, #007bff, #00d2ff); color: #000; }
+        .btn-scan { 
+            background: linear-gradient(135deg, #007bff, #00d2ff); color: #000; font-weight: bold;
+            border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap;
+        }
         .btn-scan:active { transform: scale(0.95); }
-        
+
+        /* 視窗與 Log */
         .viewport { flex-grow: 1; position: relative; background: #000; display:flex; justify-content:center; align-items:center;}
         video { width: 100%; height: 100%; object-fit: contain; }
         
-        /* 狀態與 Log */
         #log-overlay {
-            position: absolute; bottom: 120px; left: 15px; right: 15px;
-            background: rgba(0,0,0,0.8); color: #00ff88; font-family: monospace; font-size: 13px;
-            padding: 12px; border-radius: 8px; pointer-events: none;
-            max-height: 120px; overflow-y: auto; border-left: 3px solid #00ff88;
-            text-shadow: 1px 1px 1px black;
+            position: absolute; top: 10px; left: 10px; right: 10px;
+            background: rgba(0,0,0,0.6); color: #00ff00; font-family: monospace; font-size: 12px;
+            padding: 8px; border-radius: 5px; pointer-events: none;
+            max-height: 80px; overflow-y: auto; text-shadow: 1px 1px 1px black;
         }
 
-        /* 底部控制區 */
+        /* 底部控制區 (含變焦) */
         .controls { 
-            background: #111; padding: 30px; display: flex; justify-content: center; align-items: center; 
+            background: #111; padding: 15px 25px 30px 25px; 
+            display: flex; flex-direction: column; gap: 20px; align-items: center; 
+            z-index: 20;
             padding-bottom: max(30px, env(safe-area-inset-bottom));
         }
+
+        /* 變焦介面 */
+        .zoom-container {
+            width: 100%; display: flex; align-items: center; gap: 15px;
+            color: #ffd700; font-weight: bold; font-size: 14px;
+        }
         
+        input[type=range] {
+            flex-grow: 1; height: 6px; border-radius: 3px; background: #444;
+            accent-color: #ffd700; outline: none; -webkit-appearance: none;
+        }
+        
+        /* 快門 */
         .shutter-btn { 
-            width: 76px; height: 76px; border-radius: 50%; border: 4px solid white; cursor: pointer; 
+            width: 72px; height: 72px; border-radius: 50%; border: 4px solid white; cursor: pointer; 
             background: transparent; position: relative; transition: 0.1s;
         }
         .shutter-btn::after { 
             content:''; position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); 
-            width:64px; height:64px; background:white; border-radius:50%; 
+            width:62px; height:62px; background:white; border-radius:50%; 
         }
-        .shutter-btn:active { transform: scale(0.9); }
+        .shutter-btn:active { transform: scale(0.92); }
         .shutter-btn:active::after { background:#ccc; }
 
         .hidden { display: none; }
@@ -59,15 +75,19 @@
 </head>
 <body>
 
-    <div class="top-bar">
-        <div class="row">
-            <span class="label">API Key</span>
-            <input type="password" id="apiKey" class="api-input" placeholder="貼上 Key (AIza...)">
-            <button class="btn-scan" onclick="scanModels()">🔍 掃描模型</button>
+    <div class="top-panel">
+        <div class="control-row">
+            <span class="label">鏡頭</span>
+            <select id="cameraSelect"><option>載入中...</option></select>
         </div>
-        <div class="row">
-            <span class="label">使用模型</span>
-            <select id="modelSelect">
+        <div class="control-row">
+            <span class="label">Key</span>
+            <input type="password" id="apiKey" placeholder="貼上 API Key">
+            <button class="btn-scan" onclick="scanModels()">🔍 掃描</button>
+        </div>
+        <div class="control-row">
+            <span class="label">模型</span>
+            <select id="modelSelect" style="background:#002244; border-color:#0088ff;">
                 <option value="" disabled selected>請先掃描...</option>
             </select>
         </div>
@@ -75,10 +95,17 @@
 
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
-        <div id="log-overlay">系統就緒。<br>建議使用 Gemini 2.5 Flash 以獲得最佳速度與分析力。</div>
+        <div id="log-overlay">系統就緒。請選擇鏡頭。</div>
     </div>
 
     <div class="controls">
+        <!-- 變焦滑桿 -->
+        <div class="zoom-container">
+            <span style="width:30px; text-align:center;">1x</span>
+            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+            <span id="zoomVal" style="width:35px; text-align:right;">1.0</span>
+        </div>
+
         <div class="shutter-btn" onclick="takePhoto()"></div>
     </div>
 
@@ -86,113 +113,166 @@
 
 <script>
     const logDiv = document.getElementById('log-overlay');
+    const cameraSelect = document.getElementById('cameraSelect');
     const modelSelect = document.getElementById('modelSelect');
     const apiKeyInput = document.getElementById('apiKey');
+    const video = document.getElementById('videoPreview');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomVal = document.getElementById('zoomVal');
     
+    let currentStream = null;
+    let videoTrack = null;
+
     function log(msg) {
         logDiv.innerHTML = msg; 
         console.log(msg);
     }
 
-    async function initCamera() {
+    // 1. 初始化鏡頭列表
+    async function initCameraList() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 4096 } } 
-            });
-            document.getElementById('videoPreview').srcObject = stream;
-        } catch(e) { log("❌ 相機啟動失敗: " + e.message); }
-    }
-    initCamera();
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            stream.getTracks().forEach(t => t.stop());
 
-    // 核心：掃描並優先排序 Gemini 2.5
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cams = devices.filter(d => d.kind === 'videoinput');
+            
+            cameraSelect.innerHTML = '';
+            cams.forEach((d, i) => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.text = d.label || `Camera ${i}`;
+                cameraSelect.appendChild(opt);
+            });
+
+            if(cams.length > 0) {
+                // 預設選最後一個 (通常是主攝)
+                const defaultCam = cams[cams.length - 1];
+                cameraSelect.value = defaultCam.deviceId;
+                startCamera(defaultCam.deviceId);
+            }
+            cameraSelect.onchange = (e) => startCamera(e.target.value);
+
+        } catch(e) { log("❌ 無相機權限"); }
+    }
+
+    // 2. 啟動鏡頭 & 設定變焦
+    async function startCamera(deviceId) {
+        if(currentStream) currentStream.getTracks().forEach(t => t.stop());
+        zoomSlider.disabled = true; // 切換時先停用變焦
+
+        try {
+            // 嘗試高畫質
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { deviceId: { exact: deviceId }, width: { ideal: 4096 }, height: { ideal: 4096 } } 
+            });
+            setupVideo(stream, "HD模式");
+        } catch(e) {
+            log("⚠️ 切換至標準模式");
+            try {
+                // 降級重試
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { deviceId: { exact: deviceId } } 
+                });
+                setupVideo(stream, "標準模式");
+            } catch(e2) { log("❌ 鏡頭無法啟動"); }
+        }
+    }
+
+    function setupVideo(stream, mode) {
+        video.srcObject = stream;
+        currentStream = stream;
+        videoTrack = stream.getVideoTracks()[0];
+        
+        video.onloadedmetadata = () => {
+            const w = video.videoWidth;
+            const h = video.videoHeight;
+            log(`✅ 已啟動 (${mode}): ${w}x${h}`);
+            
+            // 設定變焦能力
+            const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+            if (caps.zoom) {
+                zoomSlider.disabled = false;
+                zoomSlider.min = caps.zoom.min;
+                // 設定最大值：取 (硬體極限) 與 (使用者要求的 8倍) 兩者較小者
+                zoomSlider.max = Math.min(caps.zoom.max, 8); 
+                zoomSlider.step = 0.1; // 細緻微調
+                zoomSlider.value = 1;
+                zoomVal.innerText = "1.0";
+                
+                // 顯示實際支援範圍
+                log(`🔍 變焦支援: ${zoomSlider.min}x - ${zoomSlider.max}x`);
+
+                zoomSlider.oninput = function() {
+                    const val = parseFloat(this.value);
+                    zoomVal.innerText = val.toFixed(1);
+                    videoTrack.applyConstraints({advanced: [{zoom: val}]})
+                        .catch(e => console.log("Zoom fail", e));
+                };
+            } else {
+                zoomSlider.disabled = true;
+                zoomVal.innerText = "N/A";
+                log("⚠️ 此鏡頭不支援硬體變焦");
+            }
+        };
+    }
+
+    // 3. AI 模型掃描
     async function scanModels() {
         const key = apiKeyInput.value.trim();
-        if(!key) return log("❌ 請先輸入 API Key");
-
-        log("🔄 正在搜尋 Gemini 2.5 Flash...");
+        if(!key) return log("❌ 請輸入 Key");
+        log("🔄 掃描中...");
         
         try {
             const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
             const data = await res.json();
             
-            if(data.error) return log(`❌ API 錯誤: ${data.error.message}`);
-            if(!data.models) return log("❌ 找不到模型列表");
-
-            // 1. 過濾可用模型
-            const validModels = data.models.filter(m => 
-                m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent")
-            );
-
-            // 2. 智慧排序邏輯
+            if(data.error) return log(`❌ ${data.error.message}`);
+            
+            const validModels = data.models.filter(m => m.supportedGenerationMethods?.includes("generateContent"));
+            
+            // 排序: 2.5 Flash 第一
             validModels.sort((a, b) => {
-                const nameA = a.name.toLowerCase();
-                const nameB = b.name.toLowerCase();
-                
-                // 優先級 1: 2.5 Flash
-                const is25FlashA = nameA.includes("gemini-2.5-flash");
-                const is25FlashB = nameB.includes("gemini-2.5-flash");
-                if (is25FlashA && !is25FlashB) return -1;
-                if (!is25FlashA && is25FlashB) return 1;
-
-                // 優先級 2: 1.5 Flash (備案)
-                const is15FlashA = nameA.includes("gemini-1.5-flash");
-                const is15FlashB = nameB.includes("gemini-1.5-flash");
-                if (is15FlashA && !is15FlashB) return -1;
-                if (!is15FlashA && is15FlashB) return 1;
-
+                const nA = a.name, nB = b.name;
+                if (nA.includes("2.5-flash") && !nB.includes("2.5-flash")) return -1;
+                if (!nA.includes("2.5-flash") && nB.includes("2.5-flash")) return 1;
                 return 0;
             });
 
-            // 3. 填入選單
             modelSelect.innerHTML = '';
             validModels.forEach(m => {
                 const opt = document.createElement('option');
                 opt.value = m.name;
-                
-                // 美化顯示名稱
-                let displayName = m.name.replace('models/', '');
-                if (displayName.includes('gemini-2.5-flash')) {
-                    displayName = `🚀 ${displayName} (最新推薦)`;
-                    opt.style.fontWeight = "bold";
-                    opt.style.color = "#00ff00"; // 綠色高亮
-                    opt.style.backgroundColor = "#002200";
-                } else if (displayName.includes('flash')) {
-                    displayName = `⚡ ${displayName}`;
-                }
-                
-                opt.text = displayName;
+                let t = m.name.replace('models/', '');
+                if (t.includes('2.5-flash')) t = `🚀 ${t}`;
+                else if (t.includes('flash')) t = `⚡ ${t}`;
+                opt.text = t;
                 modelSelect.appendChild(opt);
             });
-
-            // 4. 自動選中第一個 (由於我們排過序，第一個一定是最優的 Flash)
             if(modelSelect.options.length > 0) {
                 modelSelect.selectedIndex = 0;
-                log(`✅ 已自動鎖定最佳模型：\n${modelSelect.options[0].text}`);
+                log(`✅ 已鎖定: ${modelSelect.options[0].text}`);
             }
-
-        } catch(e) {
-            log("❌ 連線失敗，請檢查網路");
-        }
+        } catch(e) { log("❌ 連線錯誤"); }
     }
 
+    // 4. 拍照
     async function takePhoto() {
         const selectedModel = modelSelect.value;
-        if(!selectedModel) return alert("請先執行「掃描模型」！");
-
-        const video = document.getElementById('videoPreview');
-        const canvas = document.getElementById('canvas');
         const key = apiKeyInput.value.trim();
+        if(!selectedModel) return alert("請先掃描模型！");
 
-        // 智能縮圖 (1024px 對於 2.5 Flash 來說已足夠分析細節且省流量)
+        const canvas = document.getElementById('canvas');
+        // 縮圖至 1024px 以加速 AI
         const scale = Math.min(1024/video.videoWidth, 1024/video.videoHeight, 1);
         canvas.width = video.videoWidth * scale;
         canvas.height = video.videoHeight * scale;
         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        
         const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-
-        // 顯示使用的模型名稱
         const shortName = selectedModel.replace('models/', '');
-        log(`📷 正在使用 ${shortName} 分析...`);
+        
+        log(`📷 傳送中 (${shortName})...`);
 
         try {
             const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${selectedModel}:generateContent?key=${key}`, {
@@ -201,31 +281,24 @@
                 body: JSON.stringify({
                     contents: [{
                         parts: [
-                            { text: "你是專業攝影師。請用繁體中文分析：1.畫質與解析度 2.光線與白平衡 3.如何拍得更好 (50字內)" },
+                            { text: "請分析照片：1.畫質 2.光線 3.建議 (繁體中文, 50字內)" },
                             { inline_data: { mime_type: "image/jpeg", data: base64 } }
                         ]
                     }]
                 })
             });
-
             const data = await res.json();
-
             if(data.error) {
-                log(`❌ 分析失敗: ${data.error.message}`);
-                // 如果 2.5 失敗，提示用戶換 1.5
-                if (shortName.includes('2.5')) {
-                    alert("Gemini 2.5 額度可能已滿或未開通。\n請在上方選單切換回 '1.5 Flash' 再試一次！");
-                }
+                log("❌ 分析失敗");
+                alert(data.error.message);
             } else {
-                const text = data.candidates[0].content.parts[0].text;
-                log("✅ 分析完成！");
-                alert(`🤖 ${shortName} 分析報告：\n\n` + text);
+                log("✅ 分析完成");
+                alert(data.candidates[0].content.parts[0].text);
             }
-
-        } catch(e) {
-            log("❌ 網路傳輸錯誤");
-        }
+        } catch(e) { log("❌ 網路錯誤"); }
     }
+    
+    initCameraList();
 </script>
 </body>
 </html>
