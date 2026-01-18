@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Hybrid Cam (Final Fix)</title>
+    <title>AI Cam (Fixed VGA Preview)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
@@ -141,11 +141,13 @@
     const statusPill = document.getElementById('status-pill');
     const mask = document.getElementById('mask');
     const maskText = document.getElementById('mask-text');
+    const cameraSelect = document.getElementById('cameraSelect');
     
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
-    let isSafeMode = false;
+    let isSafeMode = false; // 標記是否為低畫質預覽模式
 
+    // 初始化
     async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -154,34 +156,56 @@
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cams = devices.filter(d => d.kind === 'videoinput');
             
-            const sel = document.getElementById('cameraSelect');
-            sel.innerHTML = '';
+            cameraSelect.innerHTML = '';
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
-                sel.appendChild(opt);
+                opt.text = d.label || `Camera ${i} (ID:${i})`;
+                // 將索引值存入 dataset，方便後續判斷
+                opt.dataset.index = i;
+                cameraSelect.appendChild(opt);
             });
 
-            if(cams.length > 0) switchCamera(cams[cams.length-1].deviceId);
-            sel.onchange = e => switchCamera(e.target.value);
+            if(cams.length > 0) {
+                // 預設選最後一個 (通常是主攝)
+                const lastIdx = cams.length - 1;
+                cameraSelect.selectedIndex = lastIdx;
+                switchCamera(cams[lastIdx].deviceId, lastIdx);
+            }
+            
+            cameraSelect.onchange = e => {
+                const idx = parseInt(e.target.selectedOptions[0].dataset.index);
+                switchCamera(e.target.value, idx);
+            };
 
         } catch(e) { alert("請允許相機權限"); }
     }
 
-    // ★★★ 核心修正：主動式黑屏偵測與降級 ★★★
-    async function switchCamera(id) {
+    // ★★★ 核心修正：強制 VGA 邏輯 ★★★
+    async function switchCamera(id, index) {
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
-        statusPill.innerText = "啟動中...";
+        statusPill.innerText = "切換中...";
         isSafeMode = false;
 
         try {
-            // 嘗試 1: 4K 高畫質預覽
-            await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K Preview");
+            // 邏輯判斷：如果是 Camera 2 (通常是廣角)，直接走 VGA
+            if (index === 2) {
+                console.log("Force VGA for Camera 2");
+                await launch({ 
+                    video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } 
+                }, "Wide/VGA (HQ Photo)");
+                isSafeMode = true; // 標記為安全模式，拍照時會強制走慢速高畫質
+            } 
+            else {
+                // 其他鏡頭嘗試 4K
+                await launch({ 
+                    video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } 
+                }, "4K Preview");
+            }
         } catch(e1) {
-            console.log("4K Preview failed (or black screen detected), switching to Safe Mode...");
+            console.log("Primary launch failed, fallback...");
             try {
-                // 嘗試 2: VGA 安全模式 (保證有畫面)
+                // 保底嘗試
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Safe Preview");
                 isSafeMode = true; 
             } catch(e2) {
@@ -191,76 +215,42 @@
         }
     }
 
-    function launch(constraints, label) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                currentStream = stream;
-                video.srcObject = stream;
-                
-                // 關鍵：等待畫面真正出現
-                const playPromise = video.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.error("Auto-play was prevented");
-                    });
-                }
+    async function launch(constraints, label) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        video.srcObject = stream;
+        videoTrack = stream.getVideoTracks()[0];
+        
+        if(window.ImageCapture) {
+            try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
+        }
 
-                // 設定超時機制：如果 1.5秒內沒有 loadedmetadata 或寬度為 0，視為失敗
-                const timeoutId = setTimeout(() => {
-                    reject(new Error("Timeout waiting for video"));
-                }, 1500);
-
-                video.onloadedmetadata = () => {
-                    clearTimeout(timeoutId);
-                    
-                    // 黑屏偵測：如果寬度是 0，代表失敗
-                    if (video.videoWidth === 0 || video.videoHeight === 0) {
-                        reject(new Error("Black screen detected (0x0)"));
-                        return;
-                    }
-
-                    videoTrack = stream.getVideoTracks()[0];
-                    
-                    // 初始化 ImageCapture (拍照清晰的關鍵)
-                    if(window.ImageCapture) {
-                        try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
-                    }
-
-                    // 能力偵測
-                    const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-                    const zs = document.getElementById('zoomSlider');
-                    if(caps.zoom) {
-                        zs.disabled = false;
-                        zs.min = caps.zoom.min;
-                        zs.max = Math.min(caps.zoom.max, 8);
-                        zs.value = 1;
-                        zs.oninput = function() { 
-                            document.getElementById('zoomText').innerText = parseFloat(this.value).toFixed(1);
-                            videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); 
-                        }
-                    } else { zs.disabled = true; }
-
-                    hardwareExposure = !!caps.exposureCompensation;
-
-                    // UI 更新
-                    if(isSafeMode || label.includes("Safe")) {
-                        statusPill.innerText = `⚠️ Safe Preview (Capture is HQ)`;
-                        statusPill.className = "warn-mode";
-                    } else {
-                        statusPill.innerText = `✅ ${label}`;
-                        statusPill.className = "";
-                    }
-                    
-                    resolve(); // 成功
-                };
-                
-                video.onerror = () => reject(new Error("Video Error"));
-
-            } catch(e) {
-                reject(e);
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        
+        // 變焦
+        const zs = document.getElementById('zoomSlider');
+        if(caps.zoom) {
+            zs.disabled = false;
+            zs.min = caps.zoom.min;
+            zs.max = Math.min(caps.zoom.max, 8);
+            zs.value = 1;
+            zs.oninput = function() { 
+                document.getElementById('zoomText').innerText = parseFloat(this.value).toFixed(1);
+                videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); 
             }
-        });
+        } else { zs.disabled = true; }
+
+        hardwareExposure = !!caps.exposureCompensation;
+        
+        video.onloadedmetadata = () => {
+            if(isSafeMode || label.includes("VGA")) {
+                statusPill.innerText = `⚠️ ${label}`;
+                statusPill.className = "warn-mode";
+            } else {
+                statusPill.innerText = `✅ ${label}`;
+                statusPill.className = "";
+            }
+        };
     }
 
     async function capture() {
@@ -268,28 +258,26 @@
         const isHdr = document.getElementById('hdrToggle').checked;
         
         try {
-            // 無論預覽畫質如何，拍照一律嘗試調用硬體最高畫質
             if(!isHdr) {
                 maskText.innerText = "Capturing HQ...";
-                const bmp = await grabHighQuality();
+                // 強制使用高畫質擷取
+                const bmp = await grabHighQuality(true); 
                 await finalize(bmp, "Photo");
             } else {
                 const count = parseInt(document.getElementById('hdrCount').value);
                 const frames = [];
-                const startEv = -((count-1)/2); // EV Step 1.0
+                const startEv = -((count-1)/2); 
                 
-                // 如果是 SafeMode (預覽很糊)，連拍時必須強制用 takePhoto (慢但清晰)
-                // 如果是正常模式，用 grabFrame (快)
+                // 如果是 SafeMode (VGA預覽)，連拍必須強制用 takePhoto
                 const useSlowPath = isSafeMode; 
 
                 for(let i=0; i<count; i++) {
                     const ev = startEv + i;
-                    maskText.innerText = `HDR ${i+1}/${count} (EV ${ev})`;
+                    maskText.innerText = `HDR ${i+1}/${count}`;
                     
                     await setEV(ev);
-                    await sleep(useSlowPath ? 400 : 150); // 慢速模式多等一下
+                    await sleep(useSlowPath ? 400 : 150); 
                     
-                    // 在安全模式下，強制使用 takePhoto 來確保 HDR 素材也是高畫質
                     const bmp = await grabHighQuality(useSlowPath); 
                     frames.push({ ev: ev, img: bmp });
                 }
@@ -307,19 +295,18 @@
 
     // ★ 關鍵：強制獲取高品質影像 ★
     async function grabHighQuality(forceTakePhoto = false) {
-        // 1. 如果有 ImageCapture 且 (強制慢速模式 或 預設優先)，嘗試 takePhoto
-        // 這能繞過 VGA 預覽，直接命令硬體拍出 12MP 照片
+        // 如果有 ImageCapture 且 (強制慢速模式 或 預設優先)，嘗試 takePhoto
+        // 這能繞過 VGA 預覽，直接命令硬體拍出原圖
         if(imageCapture && (forceTakePhoto || true)) { 
             try {
                 const blob = await imageCapture.takePhoto();
                 return await createImageBitmap(blob);
             } catch(e) { 
-                console.log("takePhoto failed, trying grabFrame"); 
+                console.log("takePhoto failed, fallback to grabFrame"); 
             }
         }
         
-        // 2. 備援：如果 takePhoto 失敗，只好抓截圖
-        // 注意：如果是 SafeMode 且走到這裡，照片會是 VGA (沒辦法了)
+        // 備援：如果 takePhoto 失敗，只好抓截圖 (如果是 SafeMode，這張會是 VGA)
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
         c.getContext('2d').drawImage(video, 0, 0);
@@ -336,7 +323,7 @@
         
         ctx.drawImage(base.img, 0, 0);
 
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 0.5; 
         frames.forEach(f => {
             if(f.ev < 0) {
                 ctx.globalCompositeOperation = 'darken';
@@ -367,7 +354,7 @@
         if(isUpscale) {
             maskText.innerText = "Upscaling...";
             if(canvas.width * canvas.height > 20000000) {
-                console.log("Skip upscale");
+                console.log("Too big to upscale");
             } else {
                 const upCvs = document.getElementById('cUpscale');
                 upCvs.width = canvas.width * 2; upCvs.height = canvas.height * 2;
@@ -399,7 +386,9 @@
         ctx.filter = 'none';
     }
 
-    function toggleStyle(el, labelId) { document.getElementById(labelId).classList.toggle('active', el.checked); }
+    function toggleStyle(el, labelId) {
+        document.getElementById(labelId).classList.toggle('active', el.checked);
+    }
     
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
@@ -412,6 +401,4 @@
 </script>
 </body>
 </html>
-
-
 
