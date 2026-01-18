@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI HDR (Native Complete)</title>
+    <title>AI Ultimate Camera (Full & HDR)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
@@ -18,12 +18,23 @@
         
         select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 12px; flex-grow: 1; max-width: 100px; }
         
-        /* 按鈕群組 */
         .btn-group { display: flex; background: #222; border-radius: 6px; padding: 2px; border: 1px solid #444; }
         .btn-opt {
             padding: 6px 10px; font-size: 11px; cursor: pointer; border-radius: 4px; color: #888; transition: 0.2s; white-space: nowrap;
         }
         .btn-opt.active { background: #00d2ff; color: #000; font-weight: bold; }
+        .btn-group.disabled { opacity: 0.5; pointer-events: none; }
+
+        /* 開關樣式 (HDR & Upscale) */
+        .feature-toggle {
+            display: flex; align-items: center; gap: 6px; font-size: 11px; color: #aaa;
+            background: #222; padding: 4px 8px; border-radius: 15px; border: 1px solid #444;
+            cursor: pointer;
+        }
+        /* HDR 開啟時是橘色 */
+        .feature-toggle input:checked + span.hdr-label { color: #ffaa00; font-weight: bold; text-shadow: 0 0 5px rgba(255, 170, 0, 0.5); }
+        /* Upscale 開啟時是洋紅色 */
+        .feature-toggle input:checked + span.upscale-label { color: #ff00ff; font-weight: bold; text-shadow: 0 0 5px rgba(255, 0, 255, 0.5); }
 
         /* 視窗區域 */
         .viewport { 
@@ -37,12 +48,9 @@
             overflow: hidden; transition: all 0.3s ease;
         }
         
-        video { 
-            width: 100%; height: 100%; 
-            object-fit: contain; /* 確保看到完整 4:3 畫面 */
-        }
+        video { width: 100%; height: 100%; object-fit: contain; }
 
-        /* 分析儀 HUD (回歸) */
+        /* HUD */
         #hud {
             position: absolute; bottom: 20px; left: 20px; 
             background: rgba(0,0,0,0.5); padding: 8px; border-radius: 8px;
@@ -78,19 +86,19 @@
         
         .ac-hdr input { accent-color: #ffaa00; }
         .ac-ev input { accent-color: #00d2ff; }
-        .ac-zoom input { accent-color: #00ff88; } /* 變焦顏色 */
+        .ac-zoom input { accent-color: #00ff88; }
 
         .shutter {
             width: 72px; height: 72px; border-radius: 50%;
             border: 4px solid rgba(255,255,255,0.2);
-            background: radial-gradient(circle, #fff 30%, #00d2ff 100%);
+            background: radial-gradient(circle, #fff 30%, #ff00ff 100%);
             cursor: pointer; transition: 0.1s; position: relative;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+            box-shadow: 0 0 20px rgba(255, 0, 255, 0.3);
             margin-top: 5px;
         }
         .shutter:active { transform: scale(0.9); }
 
-        /* 原生尺寸指示標籤 */
+        /* 標籤 */
         #res-badge {
             position: absolute; top: 10px; left: 10px; z-index: 10;
             background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
@@ -103,27 +111,35 @@
 </head>
 <body>
 
-    <!-- 運算用濾鏡 -->
+    <!-- 銳化濾鏡 (增強版) -->
     <svg style="width:0;height:0;position:absolute;">
-        <defs><filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter></defs>
+        <defs>
+            <filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter>
+            <filter id="upscale-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -0.5 0 -0.5 3 -0.5 0 -0.5 0"/></filter>
+        </defs>
     </svg>
 
     <div class="top-bar">
         <div class="row">
             <select id="cameraSelect"><option>Loading...</option></select>
-            <div class="btn-group frame-selector">
+            <div class="btn-group frame-selector" id="frameSelector">
                 <div class="btn-opt active" onclick="setFrames(3, this)">3幀</div>
                 <div class="btn-opt" onclick="setFrames(5, this)">5幀</div>
                 <div class="btn-opt" onclick="setFrames(7, this)">7幀</div>
             </div>
         </div>
         <div class="row">
-            <div class="btn-group" id="ratioSelector">
-                <!-- 預設 Full (4:3) -->
-                <div class="btn-opt active" onclick="setRatio('full', this)">原生 Full</div>
-                <div class="btn-opt" onclick="setRatio(16/9, this)">16:9</div>
-                <div class="btn-opt" onclick="setRatio(1, this)">1:1</div>
-            </div>
+            <!-- 功能開關組 -->
+            <label class="feature-toggle">
+                <input type="checkbox" id="hdrToggle" checked onchange="updateUIState()">
+                <span class="hdr-label">HDR</span>
+            </label>
+
+            <label class="feature-toggle">
+                <input type="checkbox" id="upscaleToggle">
+                <span class="upscale-label">2x Upscale</span>
+            </label>
+            
             <label style="font-size:11px; color:#aaa; display:flex; align-items:center;">
                 <input type="checkbox" id="autoMode" checked> 智慧張數
             </label>
@@ -131,12 +147,11 @@
     </div>
 
     <div class="viewport" id="viewport">
-        <div id="res-badge">Res: Checking...</div>
+        <div id="res-badge">Checking...</div>
         <div id="preview-container">
             <video id="videoPreview" autoplay playsinline muted></video>
         </div>
         
-        <!-- 場景分析儀 (回歸) -->
         <div id="hud">
             <div class="hud-txt">DYNAMIC RANGE</div>
             <div class="hud-bar"><div id="dr-fill" class="hud-fill"></div></div>
@@ -160,7 +175,6 @@
             <input type="range" id="evRange" min="1.0" max="4.0" step="0.5" value="2.5">
             <span id="evText">±2.5</span>
         </div>
-        <!-- 變焦滑桿 (回歸) -->
         <div class="slider-row ac-zoom">
             <span>Zoom</span>
             <input type="range" id="zoom" min="1" max="8" step="0.1" value="1" disabled>
@@ -169,8 +183,8 @@
         <div class="shutter" onclick="startCaptureSequence()"></div>
     </div>
 
-    <!-- 運算畫布 -->
     <canvas id="cFinal"></canvas>
+    <canvas id="cUpscale"></canvas>
     <canvas id="cAnalysis" width="64" height="64"></canvas>
 
 <script>
@@ -181,17 +195,32 @@
     const progSub = document.getElementById('prog-sub');
     const resBadge = document.getElementById('res-badge');
     const autoMode = document.getElementById('autoMode');
+    const upscaleToggle = document.getElementById('upscaleToggle');
+    const hdrToggle = document.getElementById('hdrToggle');
     const drFill = document.getElementById('dr-fill');
     const drVal = document.getElementById('dr-val');
     
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
     let frameCount = 3; 
-    let currentRatio = 4/3; // 原生通常是 4:3
-    let isRatioFull = true;
     let analyzerTimer;
 
-    // 初始化
+    // UI 狀態更新
+    function updateUIState() {
+        const isHdr = hdrToggle.checked;
+        const frameSelector = document.getElementById('frameSelector');
+        
+        if (isHdr) {
+            frameSelector.classList.remove('disabled');
+            autoMode.disabled = false;
+            autoMode.parentElement.style.opacity = '1';
+        } else {
+            frameSelector.classList.add('disabled');
+            autoMode.disabled = true;
+            autoMode.parentElement.style.opacity = '0.5';
+        }
+    }
+
     async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -209,24 +238,17 @@
             });
             if(cams.length>0) switchCamera(cams[cams.length-1].deviceId);
             sel.onchange = e => switchCamera(e.target.value);
-            
-            // 啟動分析儀 (回歸)
             startAnalyzer();
-
+            updateUIState();
         } catch(e) { alert("請允許相機權限"); }
     }
 
     async function switchCamera(id) {
         if(currentStream) currentStream.getTracks().forEach(t=>t.stop());
         try {
-            // 強制 4:3 以解鎖原生畫質
+            // 強制 4:3 比例以獲取最大原生畫質 (Full)
             const constraints = {
-                video: { 
-                    deviceId: { exact: id }, 
-                    width: { ideal: 4096 }, 
-                    height: { ideal: 4096 },
-                    aspectRatio: { ideal: 1.333333 } 
-                } 
+                video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: { ideal: 1.333333 } } 
             };
             await launch(constraints);
         } catch(e) {
@@ -250,10 +272,7 @@
             } catch(e){}
         }
 
-        // 硬體能力檢查
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        
-        // 變焦 (回歸)
         const zs = document.getElementById('zoom');
         if(caps.zoom) {
             zs.disabled = false;
@@ -263,7 +282,6 @@
             zs.oninput = function() { videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); }
         }
 
-        // EV
         hardwareExposure = !!caps.exposureCompensation;
         if(hardwareExposure) {
             const max = Math.min(Math.abs(caps.exposureCompensation.min), Math.abs(caps.exposureCompensation.max));
@@ -271,12 +289,10 @@
         }
         
         video.onloadedmetadata = () => {
-            if(!imageCapture) resBadge.innerText = `Stream: ${video.videoWidth}x${video.videoHeight} (4:3 Mode)`;
-            updatePreviewLayout();
+            if(!imageCapture) resBadge.innerText = `Stream: ${video.videoWidth}x${video.videoHeight} (4:3)`;
         };
     }
 
-    // UI 設定
     window.setFrames = function(n, el) {
         frameCount = n;
         el.parentElement.querySelectorAll('.btn-opt').forEach(o => o.classList.remove('active'));
@@ -284,34 +300,11 @@
         autoMode.checked = false;
     }
 
-    window.setRatio = function(r, el) {
-        if(r === 'full') {
-            isRatioFull = true;
-            currentRatio = 4/3; 
-        } else {
-            isRatioFull = false;
-            currentRatio = r;
-        }
-        el.parentElement.querySelectorAll('.btn-opt').forEach(o => o.classList.remove('active'));
-        el.classList.add('active');
-        updatePreviewLayout();
-    }
+    document.getElementById('evRange').oninput = function() { document.getElementById('evText').innerText = `±${this.value}`; }
 
-    function updatePreviewLayout() {
-        if (!video.videoWidth) return;
-        const ratio = isRatioFull ? (video.videoWidth / video.videoHeight) : currentRatio;
-        video.style.aspectRatio = `${ratio}`;
-    }
-
-    document.getElementById('evRange').oninput = function() {
-        document.getElementById('evText').innerText = `±${this.value}`;
-    }
-
-    // ★★★ 核心：場景分析儀 (決定張數) ★★★
     function startAnalyzer() {
         if(analyzerTimer) clearInterval(analyzerTimer);
         const ctx = document.getElementById('cAnalysis').getContext('2d');
-        
         analyzerTimer = setInterval(() => {
             if(video.readyState !== 4) return;
             ctx.drawImage(video, 0, 0, 64, 64);
@@ -322,13 +315,11 @@
                 if(l<min) min=l; if(l>max) max=l;
             }
             const contrast = Math.round(((max-min)/255)*100);
-            
-            // 更新 HUD
             drFill.style.width = `${contrast}%`;
             drVal.innerText = `${contrast}%`;
             
-            // 自動模式邏輯
-            if(autoMode.checked) {
+            // 自動調整張數僅在 HDR 開啟時有效
+            if(autoMode.checked && hdrToggle.checked) {
                 if(contrast > 85) updateFrameUI(7);
                 else if(contrast > 60) updateFrameUI(5);
                 else updateFrameUI(3);
@@ -343,95 +334,86 @@
         });
     }
 
-    // ★★★ 拍攝序列 ★★★
     async function startCaptureSequence() {
         progMask.style.display = 'flex';
         const evRange = parseFloat(document.getElementById('evRange').value);
         const strength = parseInt(document.getElementById('strength').value) / 100;
+        const isHdr = hdrToggle.checked;
         
-        // 計算 EV 步進
-        let evSteps = [];
-        if (frameCount === 1) evSteps = [0];
-        else {
-            const stepSize = (evRange * 2) / (frameCount - 1);
-            for(let i=0; i<frameCount; i++) evSteps.push(Math.round((-evRange + stepSize * i) * 10) / 10);
-        }
-
         let captures = [];
         try {
-            // [策略 A] 原生單張拍攝 (最高畫質)
-            if (isRatioFull && frameCount === 1 && imageCapture) {
-                progLog.innerText = "原生高畫質拍攝...";
-                const blob = await imageCapture.takePhoto();
-                const bmp = await createImageBitmap(blob);
+            // [路徑 A] HDR 關閉：單張拍攝 (原生最大畫質)
+            if (!isHdr) {
+                progLog.innerText = "Single Shot (Full Native)...";
+                progSub.innerText = "Processing...";
+                
+                let bmp;
+                if (imageCapture) {
+                    const blob = await imageCapture.takePhoto();
+                    bmp = await createImageBitmap(blob);
+                } else {
+                    // 備援：截取影片流 (已經鎖定 4:3 比例，不會有黑邊裁切問題)
+                    bmp = await grabFullFrame();
+                }
                 captures.push({ ev: 0, img: bmp });
             } 
-            // [策略 B] HDR 連拍
+            // [路徑 B] HDR 開啟：多幀連拍
             else {
+                let evSteps = [];
+                const stepSize = (evRange * 2) / (frameCount - 1);
+                for(let i=0; i<frameCount; i++) evSteps.push(Math.round((-evRange + stepSize * i) * 10) / 10);
+
                 for(let i=0; i<evSteps.length; i++) {
                     const targetEV = evSteps[i];
                     progLog.innerText = `HDR 連拍 (${i+1}/${frameCount})`;
                     progSub.innerText = `EV ${targetEV > 0 ? '+' : ''}${targetEV}`;
                     await setEV(targetEV);
                     await sleep(150); 
-                    const bmp = await grabAndCrop();
+                    // HDR 連拍時使用 grabFullFrame，因為速度比 takePhoto 快
+                    const bmp = await grabFullFrame();
                     captures.push({ ev: targetEV, img: bmp });
                 }
             }
             
             setEV(0);
-            progLog.innerText = "合成運算中...";
-            progSub.innerText = "Tone Mapping & De-Ghosting";
+            progLog.innerText = "運算合成中...";
             await processMultiFrameHDR(captures, strength);
 
         } catch(e) {
             console.error(e);
-            alert("拍攝失敗");
+            alert("拍攝失敗: " + e.message);
             progMask.style.display = 'none';
         }
     }
 
-    // ★ 關鍵：裁切邏輯 ★
-    async function grabAndCrop() {
+    // 抓取全尺寸 (不裁切，因為我們已經設定硬體為 4:3)
+    async function grabFullFrame() {
         let source;
-        if(imageCapture) {
-            try { source = await imageCapture.grabFrame(); } catch(e){}
-        }
+        if(imageCapture) { try { source = await imageCapture.grabFrame(); } catch(e){} }
         if (!source) source = video; 
 
         const sw = source.width || source.videoWidth;
         const sh = source.height || source.videoHeight;
-
-        // 如果是 Full 模式，直接 1:1 輸出
-        if (isRatioFull) {
-            const c = document.createElement('canvas');
-            c.width = sw; c.height = sh;
-            c.getContext('2d').drawImage(source, 0, 0);
-            return c;
-        }
-
-        // 否則裁切 (Center Crop)
-        const sourceRatio = sw / sh;
-        let cropW, cropH, cropX, cropY;
-
-        if (currentRatio > sourceRatio) { 
-            cropW = sw; cropH = sw / currentRatio;
-            cropX = 0; cropY = (sh - cropH) / 2;
-        } else { 
-            cropH = sh; cropW = sh * currentRatio;
-            cropY = 0; cropX = (sw - cropW) / 2;
-        }
-
+        
+        // 直接建立 1:1 畫布
         const c = document.createElement('canvas');
-        c.width = cropW; c.height = cropH;
-        c.getContext('2d').drawImage(source, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        c.width = sw; c.height = sh;
+        c.getContext('2d').drawImage(source, 0, 0);
         return c;
     }
 
     async function processMultiFrameHDR(captures, strength) {
+        // 如果只有一張 (單拍模式)，直接處理輸出
         if(captures.length === 1) {
-            save(captures[0].img, "Photo");
-            progMask.style.display = 'none';
+            const c = document.createElement('canvas');
+            c.width = captures[0].img.width;
+            c.height = captures[0].img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(captures[0].img, 0, 0);
+            
+            // 單張模式下，稍微銳化提升質感
+            applySharpen(ctx, c.width, c.height);
+            finalizeOutput(c, "Photo_Native");
             return;
         }
 
@@ -462,14 +444,52 @@
         ctx.globalCompositeOperation = 'soft-light';
         ctx.globalAlpha = 0.3;
         ctx.drawImage(baseFrame.img, 0, 0);
-
+        
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
         
         applySharpen(ctx, w, h);
+        finalizeOutput(canvas, "HDR_Native");
+    }
 
-        save(canvas, "HDR");
+    // 統一輸出處理 (含 Upscale 邏輯)
+    async function finalizeOutput(canvas, prefix) {
+        if (upscaleToggle.checked) {
+            // 防爆檢查
+            const totalPixels = canvas.width * canvas.height;
+            if (totalPixels > 16000000) {
+                progLog.innerText = "原圖已夠大，略過放大";
+                await sleep(500);
+                save(canvas, prefix);
+            } else {
+                progLog.innerText = "AI 畫素提升 2x...";
+                await performUpscale(canvas, prefix);
+            }
+        } else {
+            save(canvas, prefix);
+        }
         progMask.style.display = 'none';
+    }
+
+    async function performUpscale(sourceCanvas, prefix) {
+        const upCanvas = document.getElementById('cUpscale');
+        const dw = sourceCanvas.width * 2;
+        const dh = sourceCanvas.height * 2;
+        upCanvas.width = dw; upCanvas.height = dh;
+        const ctx = upCanvas.getContext('2d');
+        
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(sourceCanvas, 0, 0, dw, dh);
+        
+        const t = document.createElement('canvas'); t.width=dw; t.height=dh;
+        t.getContext('2d').drawImage(upCanvas,0,0);
+        ctx.filter = 'url(#upscale-sharpen) contrast(1.05)';
+        ctx.clearRect(0,0,dw,dh);
+        ctx.drawImage(t,0,0);
+        ctx.filter = 'none';
+        
+        save(upCanvas, prefix + "_Upscale");
     }
 
     async function setEV(val) { if(hardwareExposure) try{await videoTrack.applyConstraints({advanced:[{exposureCompensation:val}]})}catch(e){} }
@@ -484,14 +504,9 @@
     }
 
     function save(source, prefix) {
-        const c = document.getElementById('cFinal');
-        if(source !== c) {
-            c.width = source.width; c.height = source.height;
-            c.getContext('2d').drawImage(source,0,0);
-        }
         const link = document.createElement('a');
         link.download = `${prefix}_${Date.now()}.jpg`;
-        link.href = c.toDataURL('image/jpeg', 0.95);
+        link.href = source.toDataURL('image/jpeg', 0.95);
         link.click();
     }
     
