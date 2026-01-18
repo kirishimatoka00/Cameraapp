@@ -3,222 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Web Pro Camera (AI Edition)</title>
+    <title>AI Camera (Universal)</title>
     <style>
-        /* --- 基礎 UI 風格 --- */
-        body { 
-            margin: 0; 
-            background: #000; 
-            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            color: white;
-            height: 100vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
+        body { margin: 0; background: #000; font-family: sans-serif; color: white; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        
         /* 頂部工具列 */
-        .top-bar {
-            background: linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.4));
-            padding: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 20;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            box-sizing: border-box;
-        }
-
-        select {
-            background: rgba(255,255,255,0.2);
-            color: white;
-            border: 1px solid rgba(255,255,255,0.3);
-            padding: 6px 10px;
-            border-radius: 20px;
-            font-size: 14px;
-            backdrop-filter: blur(5px);
-        }
-
-        /* 智慧增強開關 */
-        .enhance-toggle {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            background: rgba(0, 150, 255, 0.2);
-            padding: 5px 12px;
-            border-radius: 20px;
-            border: 1px solid rgba(0, 150, 255, 0.5);
+        .top-bar { 
+            background: rgba(0,0,0,0.8); 
+            padding: 10px 15px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            position: absolute; 
+            top: 0; left: 0; right: 0; 
+            z-index: 10; 
         }
         
-        .enhance-toggle input { margin: 0; }
-        .enhance-active { box-shadow: 0 0 10px rgba(0, 150, 255, 0.6); }
+        select { 
+            background: #222; 
+            color: #fff; 
+            border: 1px solid #555; 
+            padding: 8px; 
+            border-radius: 8px; 
+            font-size: 14px; 
+            max-width: 60%;
+        }
 
         /* 視窗區域 */
-        .viewport {
-            flex-grow: 1;
-            position: relative;
-            background: #000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+        .viewport { flex-grow: 1; position: relative; background: #111; display:flex; justify-content:center; align-items:center;}
+        video { width: 100%; height: 100%; object-fit: contain; }
 
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
-
-        /* 底部控制區 */
-        .controls {
-            background: rgba(0,0,0,0.8);
-            padding: 20px 20px 40px 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 20px;
-            z-index: 20;
-            backdrop-filter: blur(10px);
-        }
-
-        /* 變焦滑桿 */
-        .zoom-panel {
-            width: 90%;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            color: #ffd700;
-            font-weight: bold;
-            font-size: 14px;
-        }
-        
-        input[type=range] {
-            flex-grow: 1;
-            height: 4px;
-            background: #555;
-            border-radius: 2px;
-            accent-color: #ffd700;
-        }
-
-        /* 快門按鈕 */
-        .shutter-btn {
-            width: 72px;
-            height: 72px;
-            border-radius: 50%;
-            border: 4px solid white;
-            background: transparent;
-            position: relative;
-            cursor: pointer;
-            transition: 0.1s;
-        }
-        
-        .shutter-btn::after {
-            content: '';
+        /* 狀態訊息 */
+        .status-badge {
             position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 60px; height: 60px;
-            background: white;
-            border-radius: 50%;
-            transition: 0.2s;
-        }
-        
-        .shutter-btn:active::after { 
-            width: 50px; height: 50px; 
-            background: #ccc;
-        }
-
-        /* Gemini AI 面板 */
-        #gemini-panel {
-            position: absolute;
-            bottom: 150px; /* 位於控制區上方 */
-            left: 20px;
-            right: 20px;
-            background: rgba(20, 20, 30, 0.95);
-            border: 1px solid #444;
-            border-radius: 12px;
-            padding: 15px;
-            display: none; /* 預設隱藏 */
-            z-index: 30;
-            color: #ccc;
-            font-size: 13px;
-        }
-        
-        #gemini-panel h3 { margin: 0 0 10px 0; color: #4facfe; font-size: 15px; display:flex; align-items:center; gap:5px;}
-        #gemini-content { max-height: 100px; overflow-y: auto; line-height: 1.4; margin-bottom: 10px;}
-        .api-input { width: 100%; padding: 8px; background:#111; border:1px solid #444; color:white; border-radius:4px; box-sizing: border-box; margin-bottom: 5px;}
-        
-        .btn-small {
-            background: #444; color: white; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;
-        }
-        .btn-gemini { background: linear-gradient(45deg, #4facfe, #00f2fe); color: #000; font-weight: bold; }
-
-        /* SVG 濾鏡 (隱藏) */
-        .svg-filters { position: absolute; width: 0; height: 0; overflow: hidden; }
-        
-        /* 狀態標籤 */
-        .badge {
-            position: absolute;
-            top: 60px;
-            right: 20px;
-            background: rgba(0,0,0,0.6);
+            top: 70px;
+            right: 15px;
+            background: rgba(0,0,0,0.5);
             padding: 4px 8px;
             border-radius: 4px;
             font-size: 12px;
-            color: #aaa;
+            color: #ccc;
+            pointer-events: none;
         }
+
+        /* 底部控制區 */
+        .controls { 
+            background: rgba(0,0,0,0.9); 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px; 
+            z-index: 10; 
+        }
+
+        /* 變焦 */
+        .zoom-container { display:flex; gap:10px; align-items:center; width: 100%; }
+        input[type=range] { flex-grow: 1; height:20px; }
+
+        /* 快門 */
+        .shutter-group { display:flex; justify-content:space-between; align-items:center; width:100%; }
+        .shutter-btn { 
+            width: 70px; height: 70px; 
+            border-radius: 50%; 
+            border: 4px solid white; 
+            cursor: pointer; 
+            position: relative; 
+            background: transparent;
+        }
+        .shutter-btn::after { 
+            content:''; position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); 
+            width:60px; height:60px; background:white; border-radius:50%; transition:0.1s;
+        }
+        .shutter-btn:active::after { transform:translate(-50%,-50%) scale(0.9); background:#ccc; }
+
+        /* Gemini 面板 */
+        #gemini-panel { 
+            position: absolute; bottom: 130px; left: 15px; right: 15px; 
+            background: rgba(30,30,35,0.95); 
+            border: 1px solid #4facfe; 
+            border-radius: 12px; 
+            padding: 15px; 
+            display: none; 
+            z-index: 20; 
+        }
+        .api-input { width: 100%; padding: 10px; background: #111; border: 1px solid #444; color: white; margin-bottom: 10px; box-sizing: border-box; border-radius: 5px;}
+        #gemini-text { font-size: 13px; color: #ddd; max-height: 120px; overflow-y: auto; line-height: 1.5; }
+        .close-btn { float: right; background: #555; border: none; color: white; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
     </style>
 </head>
 <body>
 
-    <!-- SVG 濾鏡定義：用於 Canvas 的智慧銳化 -->
-    <svg class="svg-filters">
-        <defs>
-            <filter id="smart-sharpen">
-                <!-- 卷積矩陣銳化濾鏡 -->
-                <feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" preserveAlpha="true"/>
-            </filter>
-        </defs>
+    <!-- 隱藏的 SVG 濾鏡 (智慧增強用) -->
+    <svg style="width:0;height:0;position:absolute;">
+        <defs><filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter></defs>
     </svg>
 
     <div class="top-bar">
-        <select id="cameraSelect"><option>Loading...</option></select>
-        
-        <label class="enhance-toggle" id="enhanceLabel">
-            <input type="checkbox" id="enhanceCheck" checked>
-            <span>✨ 智慧增強</span>
-        </label>
+        <select id="cameraSelect"><option>載入中...</option></select>
+        <div style="font-size:12px; display:flex; align-items:center; gap:5px;">
+            <input type="checkbox" id="enhanceCheck" checked> <span>AI增強</span>
+        </div>
     </div>
 
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
-        <div class="badge" id="resDisplay">等待啟動...</div>
+        <div id="statusInfo" class="status-badge">等待啟動...</div>
     </div>
 
-    <!-- Gemini AI 面板 -->
+    <!-- Gemini 分析結果視窗 -->
     <div id="gemini-panel">
-        <h3>✨ Gemini AI 分析</h3>
-        <input type="password" id="apiKeyInput" class="api-input" placeholder="貼上 Gemini API Key (選填)">
-        <div id="gemini-content">輸入 Key 後，拍照時將自動分析照片品質...</div>
-        <div style="text-align: right;">
-            <button class="btn-small" onclick="document.getElementById('gemini-panel').style.display='none'">關閉</button>
+        <strong style="color:#4facfe;">🤖 Gemini 分析報告</strong>
+        <button class="close-btn" onclick="this.parentElement.style.display='none'">關閉</button>
+        <div style="margin-top:10px;">
+            <input type="password" id="apiKey" class="api-input" placeholder="在此貼上您的 Gemini API Key">
+            <div id="gemini-text">拍照後將自動分析...</div>
         </div>
     </div>
 
     <div class="controls">
-        <div class="zoom-panel">
-            <span>1.0x</span>
+        <div class="zoom-container">
+            <span style="font-size:12px; width:30px;">1.0x</span>
             <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" disabled>
-            <span id="zoomVal">1.0</span>
         </div>
-
-        <div style="display:flex; gap:20px; align-items:center;">
-            <button class="btn-small" onclick="document.getElementById('gemini-panel').style.display='block'">🤖 設定 AI</button>
+        
+        <div class="shutter-group">
+            <button onclick="document.getElementById('gemini-panel').style.display='block'" style="background:none; border:1px solid #666; color:#aaa; padding:8px; border-radius:5px; font-size:12px;">⚙️ 設定Key</button>
             <div class="shutter-btn" id="shutterBtn"></div>
+            <div style="width:50px;"></div> <!-- 佔位符，讓快門置中 -->
         </div>
     </div>
 
@@ -227,23 +138,20 @@
 <script>
     const video = document.getElementById('videoPreview');
     const cameraSelect = document.getElementById('cameraSelect');
+    const statusInfo = document.getElementById('statusInfo');
     const zoomSlider = document.getElementById('zoomSlider');
-    const zoomVal = document.getElementById('zoomVal');
-    const resDisplay = document.getElementById('resDisplay');
-    const enhanceCheck = document.getElementById('enhanceCheck');
-    const enhanceLabel = document.getElementById('enhanceLabel');
     const shutterBtn = document.getElementById('shutterBtn');
     
     // Gemini 相關
     const geminiPanel = document.getElementById('gemini-panel');
-    const geminiContent = document.getElementById('gemini-content');
-    const apiKeyInput = document.getElementById('apiKeyInput');
+    const geminiText = document.getElementById('gemini-text');
+    const apiKeyInput = document.getElementById('apiKey');
 
     let currentStream = null;
     let videoTrack = null;
     let imageCapture = null;
 
-    // 1. 初始化
+    // 1. 初始化並列出鏡頭
     async function init() {
         try {
             // 請求權限
@@ -251,165 +159,153 @@
             stream.getTracks().forEach(t => t.stop());
 
             const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
+            const cams = devices.filter(d => d.kind === 'videoinput');
+            
             cameraSelect.innerHTML = '';
-            videoDevices.forEach(d => {
+            cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${cameraSelect.length + 1}`;
+                opt.text = d.label || `Camera ${i} (無名稱)`;
                 cameraSelect.appendChild(opt);
             });
 
-            if (videoDevices.length > 0) {
-                // 嘗試預選後鏡頭
-                const backCam = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
-                cameraSelect.value = backCam ? backCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
-                startCamera(cameraSelect.value);
+            if (cams.length > 0) {
+                // 預設選擇最後一個鏡頭 (通常是主攝)
+                // 修正：如果 cameraSelect.value 為空，強制選最後一個
+                const defaultCam = cams[cams.length - 1];
+                cameraSelect.value = defaultCam.deviceId;
+                startCamera(defaultCam.deviceId);
             }
-
+            
             cameraSelect.onchange = (e) => startCamera(e.target.value);
 
-            // UI 互動
-            enhanceCheck.onchange = () => {
-                if(enhanceCheck.checked) {
-                    enhanceLabel.classList.add('enhance-active');
-                    resDisplay.innerText += " (AI Ready)";
-                } else {
-                    enhanceLabel.classList.remove('enhance-active');
-                }
-            };
-
         } catch (e) {
-            alert("請允許相機權限");
+            alert("無法存取相機，請檢查權限");
         }
     }
 
-    // 2. 啟動相機 (Max Res)
-    async function startCamera(id) {
-        if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    // 2. 啟動鏡頭 (關鍵修正：自動降級邏輯)
+    async function startCamera(deviceId) {
+        // 先停止舊的
+        if (currentStream) {
+            currentStream.getTracks().forEach(t => t.stop());
+        }
+
+        statusInfo.innerText = "啟動中 (嘗試高畫質)...";
+        zoomSlider.disabled = true;
+
+        // 定義兩種策略
+        const highResConstraints = {
+            video: {
+                deviceId: { exact: deviceId },
+                width: { ideal: 4096 }, // 嘗試 4K
+                height: { ideal: 4096 }
+            }
+        };
+
+        const fallbackConstraints = {
+            video: {
+                deviceId: { exact: deviceId } // 只要求該鏡頭，不限畫質
+            }
+        };
 
         try {
-            const constraints = {
-                video: {
-                    deviceId: { exact: id },
-                    width: { ideal: 4096 }, // 嘗試 4K
-                    height: { ideal: 4096 }
-                }
-            };
-
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            currentStream = stream;
-            video.srcObject = stream;
-            videoTrack = stream.getVideoTracks()[0];
-
-            if (window.ImageCapture) imageCapture = new ImageCapture(videoTrack);
-
-            video.onloadedmetadata = () => {
-                const w = video.videoWidth;
-                const h = video.videoHeight;
-                resDisplay.innerText = `Raw Res: ${w} x ${h}`;
-                checkZoom();
-            };
-        } catch (e) {
-            console.error(e);
+            // 嘗試策略 A: 高畫質
+            await launchStream(highResConstraints, "HD 模式");
+        } catch (err) {
+            console.warn("高畫質啟動失敗，切換相容模式...", err);
+            try {
+                // 嘗試策略 B: 相容模式 (解決 Camera 2 黑畫面問題)
+                statusInfo.innerText = "切換至相容模式...";
+                await launchStream(fallbackConstraints, "標準模式");
+            } catch (fatalErr) {
+                statusInfo.innerText = "啟動失敗";
+                alert("此鏡頭無法啟動: " + fatalErr.message);
+            }
         }
     }
 
-    // 3. 變焦
-    function checkZoom() {
-        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        if (caps.zoom) {
-            zoomSlider.disabled = false;
-            zoomSlider.min = caps.zoom.min;
-            zoomSlider.max = caps.zoom.max;
-            zoomSlider.step = caps.zoom.step;
-            
-            zoomSlider.oninput = function() {
-                zoomVal.innerText = parseFloat(this.value).toFixed(1) + 'x';
-                videoTrack.applyConstraints({advanced: [{zoom: this.value}]});
-            };
-        } else {
-            zoomSlider.disabled = true;
-            zoomVal.innerText = "N/A";
-        }
-    }
-
-    // 4. 拍照與處理 (核心邏輯)
-    shutterBtn.onclick = async () => {
-        // UI 回饋
-        shutterBtn.style.transform = "scale(0.9)";
-        setTimeout(() => shutterBtn.style.transform = "scale(1)", 100);
-
-        let bitmap = null;
+    // 輔助函式：執行 getUserMedia
+    async function launchStream(constraints, modeLabel) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        video.srcObject = stream;
+        videoTrack = stream.getVideoTracks()[0];
         
-        try {
-            // 獲取影像
-            if (imageCapture) {
-                try {
-                    bitmap = await imageCapture.grabFrame();
-                } catch(e) { console.log("grabFrame failed"); }
-            }
-            
-            const canvas = document.getElementById('photoCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            let w, h;
+        // 嘗試 ImageCapture
+        if (window.ImageCapture) {
+            try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
+        }
 
-            if (bitmap) {
-                w = bitmap.width;
-                h = bitmap.height;
-                canvas.width = w;
-                canvas.height = h;
-                ctx.drawImage(bitmap, 0, 0);
+        // 等待影片載入
+        video.onloadedmetadata = () => {
+            const w = video.videoWidth;
+            const h = video.videoHeight;
+            statusInfo.innerText = `${modeLabel}: ${w}x${h}`;
+            
+            // 檢查變焦
+            const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+            if (caps.zoom) {
+                zoomSlider.disabled = false;
+                zoomSlider.min = caps.zoom.min;
+                zoomSlider.max = caps.zoom.max;
+                zoomSlider.step = caps.zoom.step;
+                zoomSlider.value = 1;
+                // 重設變焦事件
+                zoomSlider.oninput = function() {
+                    videoTrack.applyConstraints({advanced: [{zoom: this.value}]});
+                };
             } else {
-                w = video.videoWidth;
-                h = video.videoHeight;
-                canvas.width = w;
-                canvas.height = h;
-                ctx.drawImage(video, 0, 0);
+                zoomSlider.disabled = true;
+            }
+        };
+    }
+
+    // 3. 拍照與 Gemini 分析
+    shutterBtn.onclick = async () => {
+        shutterBtn.style.opacity = 0.5;
+        setTimeout(() => shutterBtn.style.opacity = 1, 150);
+
+        try {
+            let bitmap;
+            // 優先嘗試 grabFrame (高畫質)
+            if (imageCapture) {
+                try { bitmap = await imageCapture.grabFrame(); } catch(e) {}
             }
 
-            // --- 智慧增強處理 (Smart Enhance) ---
-            if (enhanceCheck.checked) {
-                resDisplay.innerText = "處理中: 智慧銳化...";
-                
-                // 1. 應用 SVG 濾鏡到 Context (這比手寫迴圈快很多)
-                // 注意：某些瀏覽器對 Canvas filter 支援度不一，這裡使用標準語法
-                ctx.filter = 'url(#smart-sharpen) contrast(1.1) saturate(1.1)';
-                
-                // 為了應用濾鏡，我們需要把原本的圖再畫一次
-                // 建立一個暫存的 canvas copy
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = w;
-                tempCanvas.height = h;
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCtx.drawImage(canvas, 0, 0);
-                
-                // 清除主畫布並應用濾鏡重繪
+            const canvas = document.getElementById('photoCanvas');
+            const w = bitmap ? bitmap.width : video.videoWidth;
+            const h = bitmap ? bitmap.height : video.videoHeight;
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+
+            // 繪製
+            if (bitmap) ctx.drawImage(bitmap, 0, 0);
+            else ctx.drawImage(video, 0, 0);
+
+            // 智慧增強處理
+            if (document.getElementById('enhanceCheck').checked) {
+                ctx.filter = 'url(#smart-sharpen) contrast(1.1)';
+                const temp = document.createElement('canvas'); temp.width = w; temp.height = h;
+                temp.getContext('2d').drawImage(canvas, 0, 0);
                 ctx.clearRect(0, 0, w, h);
-                ctx.drawImage(tempCanvas, 0, 0);
-                
-                // 重置濾鏡以免影響下次
+                ctx.drawImage(temp, 0, 0);
                 ctx.filter = 'none';
             }
 
-            // --- 儲存照片 ---
-            const base64Image = canvas.toDataURL('image/jpeg', 0.95);
-            
-            const link = document.createElement('a');
-            link.download = `AI_CAM_${Date.now()}.jpg`;
-            link.href = base64Image;
-            link.click();
-            
-            resDisplay.innerText = `已儲存 (${w}x${h})`;
+            // 存檔 (JPG Q90)
+            const base64 = canvas.toDataURL('image/jpeg', 0.9);
+            const a = document.createElement('a');
+            a.href = base64;
+            a.download = `Photo_${Date.now()}.jpg`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
 
-            // --- Gemini AI 分析 (如果有的話) ---
-            const apiKey = apiKeyInput.value.trim();
-            if (apiKey) {
+            // 呼叫 Gemini (如果有 Key)
+            const key = apiKeyInput.value.trim();
+            if (key) {
                 geminiPanel.style.display = 'block';
-                geminiContent.innerHTML = "🤖 Gemini 正在分析照片品質...";
-                analyzeImageWithGemini(base64Image, apiKey);
+                geminiText.innerHTML = "🔄 正在傳送至 Gemini...";
+                callGemini(base64, key);
             }
 
         } catch (e) {
@@ -417,44 +313,58 @@
         }
     };
 
-    // 5. Gemini API 呼叫 (功能：分析與建議)
-    async function analyzeImageWithGemini(base64Str, key) {
-        // 移除 Data URL 前綴
+    // 呼叫 Gemini API (使用最新的 flash-latest)
+    async function callGemini(base64Str, key) {
         const cleanBase64 = base64Str.replace(/^data:image\/(png|jpeg);base64,/, "");
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${key}`;
         
         const payload = {
             contents: [{
                 parts: [
-                    { text: "作為專業攝影師，請簡短分析這張照片的解析度、對焦與光線。如果有模糊或雜訊，請給予一個具體的改進建議 (例如：手持更穩、增加光線)。請用繁體中文回答，50字以內。" },
+                    { text: "請用繁體中文簡短分析這張照片的清晰度、光線與對焦狀況，並給出改進建議。" },
                     { inline_data: { mime_type: "image/jpeg", data: cleanBase64 } }
                 ]
             }]
         };
 
         try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+            const res = await fetch(url, {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
             });
-            
-            const data = await response.json();
+            const data = await res.json();
             
             if (data.error) {
-                geminiContent.innerHTML = `<span style="color:red">API 錯誤: ${data.error.message}</span>`;
+                // 如果失敗，嘗試舊版模型
+                if(data.error.code === 404) {
+                    geminiText.innerText = "嘗試相容模型...";
+                    callGeminiLegacy(cleanBase64, key);
+                } else {
+                    geminiText.innerHTML = `<span style="color:#ff6666">${data.error.message}</span>`;
+                }
             } else {
-                const text = data.candidates[0].content.parts[0].text;
-                geminiContent.innerHTML = `<strong>🤖 分析報告:</strong><br>${text}`;
+                geminiText.innerText = data.candidates[0].content.parts[0].text;
             }
         } catch (e) {
-            geminiContent.innerHTML = `<span style="color:red">連線失敗</span>`;
+            geminiText.innerText = "連線失敗，請檢查網路。";
         }
     }
 
-    init();
+    async function callGeminiLegacy(cleanBase64, key) {
+        try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=${key}`;
+            const res = await fetch(url, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    contents: [{ parts: [{text: "分析照片清晰度"}, {inline_data: {mime_type: "image/jpeg", data: cleanBase64}}] }]
+                })
+            });
+            const data = await res.json();
+            if(data.error) geminiText.innerText = "無法分析 (Key 錯誤或模型不支援)";
+            else geminiText.innerText = data.candidates[0].content.parts[0].text;
+        } catch(e) { geminiText.innerText = "API 錯誤"; }
+    }
 
+    init();
 </script>
 </body>
 </html>
