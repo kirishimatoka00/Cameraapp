@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Cam (ISO + Denoise)</title>
+    <title>AI Cam (ISO Fixed)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
-        /* 頂部 */
         .top-bar { 
             background: rgba(20,20,25,0.95); padding: 8px 12px; z-index: 20;
             display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #333;
@@ -30,7 +29,7 @@
             flex-grow: 1; position: relative; background: #111; overflow: hidden;
             display: flex; justify-content: center; align-items: center; 
         }
-        video { width: 100%; height: 100%; object-fit: contain; }
+        video { width: 100%; height: 100%; object-fit: contain; transition: filter 0.1s; }
 
         /* 狀態標籤 */
         #status-pill {
@@ -65,7 +64,7 @@
         
         .ac-zoom input { accent-color: #00ff88; }
         .ac-ev input { accent-color: #00d2ff; }
-        .ac-iso input { accent-color: #ff0055; } /* ISO 紅色 */
+        .ac-iso input { accent-color: #ff0055; }
 
         .shutter {
             width: 68px; height: 68px; border-radius: 50%;
@@ -83,14 +82,10 @@
 </head>
 <body>
 
-    <!-- 濾鏡定義 -->
     <svg style="width:0;height:0;position:absolute;">
         <defs>
-            <!-- 智慧銳化 -->
             <filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter>
-            <!-- 畫素提升銳化 -->
             <filter id="upscale-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -0.5 0 -0.5 3 -0.5 0 -0.5 0"/></filter>
-            <!-- 降噪濾鏡 (柔化顆粒) -->
             <filter id="soft-denoise">
                 <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur"/>
                 <feComposite in="SourceGraphic" in2="blur" operator="arithmetic" k1="0" k2="0.6" k3="0.4" k4="0"/>
@@ -126,7 +121,6 @@
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
         <div id="status-pill">Init...</div>
-        
         <div id="mask">
             <div class="spinner"></div>
             <div id="mask-text" style="color:#00d2ff; font-family:monospace;">Processing...</div>
@@ -134,19 +128,17 @@
     </div>
 
     <div class="controls">
-        <!-- ISO 滑桿 (新增) -->
+        <!-- ISO 滑桿 (現在是混合式) -->
         <div class="slider-row ac-iso">
             <span class="label">ISO</span>
-            <input type="range" id="isoSlider" min="100" max="3200" step="50" value="0" disabled>
+            <input type="range" id="isoSlider" min="100" max="3200" step="50" value="100">
             <span id="isoText" style="width:35px; text-align:right">Auto</span>
         </div>
-        <!-- EV 滑桿 -->
         <div class="slider-row ac-ev">
             <span class="label">EV</span>
             <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
             <span id="evText" style="width:35px; text-align:right">0</span>
         </div>
-        <!-- Zoom 滑桿 -->
         <div class="slider-row ac-zoom">
             <span class="label">Zoom</span>
             <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
@@ -164,11 +156,14 @@
     const mask = document.getElementById('mask');
     const maskText = document.getElementById('mask-text');
     const cameraSelect = document.getElementById('cameraSelect');
+    const isoSlider = document.getElementById('isoSlider');
+    const isoText = document.getElementById('isoText');
     
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
     let hardwareIso = false;
     let isSafeMode = false;
+    let currentSoftwareIsoGain = 1.0; // 軟體增益值 (1.0 = 原圖, 2.0 = 2倍亮)
 
     async function init() {
         try {
@@ -207,19 +202,19 @@
         isSafeMode = false;
 
         try {
-            if (index === 2) { // 假設廣角鏡是 ID 2
-                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA (HQ Photo)");
+            if (index === 2) { 
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA");
                 isSafeMode = true; 
             } else {
-                await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K Preview");
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K");
             }
         } catch(e1) {
             try {
-                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Safe Preview");
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "SafeMode");
                 isSafeMode = true; 
             } catch(e2) {
                 statusPill.innerText = "Fatal Error";
-                alert("此鏡頭無法啟動");
+                alert("無法啟動");
             }
         }
     }
@@ -236,7 +231,7 @@
 
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
         
-        // 1. Zoom 設定
+        // Zoom
         const zs = document.getElementById('zoomSlider');
         if(caps.zoom) {
             zs.disabled = false;
@@ -249,42 +244,65 @@
             }
         } else { zs.disabled = true; }
 
-        // 2. ISO 設定 (新增)
-        const is = document.getElementById('isoSlider');
+        // ★★★ 混合 ISO 引擎 (Hybrid ISO) ★★★
         if(caps.iso) {
             hardwareIso = true;
-            is.disabled = false;
-            is.min = caps.iso.min;
-            is.max = caps.iso.max;
-            is.value = is.min; // 預設最小值或自動
-            document.getElementById('isoText').innerText = "Auto";
-            
-            is.oninput = function() {
-                const val = parseInt(this.value);
-                document.getElementById('isoText').innerText = val;
-                // 設定 ISO 通常需要將 exposureMode 設為 manual，但部分瀏覽器支援直接設定
-                videoTrack.applyConstraints({
-                    advanced: [{ iso: val }]
-                }).catch(e => console.log("ISO set fail"));
-            };
+            isoSlider.min = caps.iso.min;
+            isoSlider.max = caps.iso.max;
+            statusPill.innerText = `${label} | ISO: Hard`;
         } else {
             hardwareIso = false;
-            is.disabled = true;
-            document.getElementById('isoText').innerText = "N/A";
+            // 軟體模擬 ISO: 100 (基準) ~ 3200 (增亮)
+            isoSlider.min = 100;
+            isoSlider.max = 3200;
+            statusPill.innerText = `${label} | ISO: Soft`;
         }
+        isoSlider.value = 100; // Reset
+        isoText.innerText = "100";
+        currentSoftwareIsoGain = 1.0;
+        video.style.filter = "none"; // Reset preview filter
 
-        // 3. EV 設定
+        // ISO 滑桿事件
+        isoSlider.oninput = function() {
+            const val = parseInt(this.value);
+            isoText.innerText = val;
+            
+            if(hardwareIso) {
+                // 硬體控制
+                videoTrack.applyConstraints({ advanced: [{ iso: val }] })
+                    .catch(e => {
+                        // 如果硬體指令失敗，自動切換回軟體模式
+                        hardwareIso = false;
+                        applySoftwareISO(val);
+                    });
+            } else {
+                // 軟體控制
+                applySoftwareISO(val);
+            }
+        };
+
+        // EV
         hardwareExposure = !!caps.exposureCompensation;
         
         video.onloadedmetadata = () => {
             if(isSafeMode || label.includes("VGA")) {
-                statusPill.innerText = `⚠️ ${label}`;
-                statusPill.className = "warn-mode";
+                statusPill.classList.add("warn-mode");
             } else {
-                statusPill.innerText = `✅ ${label}`;
-                statusPill.className = "";
+                statusPill.classList.remove("warn-mode");
             }
         };
+    }
+
+    // 軟體 ISO 計算 (模擬增益)
+    function applySoftwareISO(isoVal) {
+        // 假設 100 是基準 1.0
+        // ISO 3200 大約是 32 倍增益，但在數位模擬上太亮會過曝，我們用 Log 曲線讓它柔和一點
+        // 簡單映射: 100 -> 1.0, 3200 -> 3.0 (3倍亮度)
+        const gain = 1.0 + ((isoVal - 100) / 1550); 
+        currentSoftwareIsoGain = gain;
+        
+        // 即時改變預覽亮度
+        video.style.filter = `brightness(${gain})`;
     }
 
     async function capture() {
@@ -358,15 +376,13 @@
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
         
-        // 基礎銳化
         applyFilter(ctx, 'url(#smart-sharpen) contrast(1.1)');
-        
         await finalize(canvas, "HDR");
     }
 
     async function finalize(source, prefix) {
         const isUpscale = document.getElementById('upscaleToggle').checked;
-        const isDenoise = document.getElementById('denoiseToggle').checked; // 讀取降噪設定
+        const isDenoise = document.getElementById('denoiseToggle').checked;
         const isPng = document.getElementById('rawToggle').checked;
         
         let canvas = document.getElementById('cFinal');
@@ -375,13 +391,26 @@
             canvas.getContext('2d').drawImage(source, 0, 0);
         } else { canvas = source; }
 
-        // ★ 降噪處理 (Denoise) ★
-        if(isDenoise) {
-            maskText.innerText = "Applying Denoise...";
-            applyFilter(canvas.getContext('2d'), 'url(#soft-denoise)');
+        const ctx = canvas.getContext('2d');
+
+        // ★ 應用軟體 ISO 增益 (如果沒用到硬體 ISO) ★
+        // 這是讓「假 ISO」成真的關鍵：把增益寫進像素裡
+        if (!hardwareIso && currentSoftwareIsoGain > 1.0) {
+            maskText.innerText = "Applying Digital Gain...";
+            // 使用 filter 進行亮度提升
+            const t = document.createElement('canvas'); t.width=canvas.width; t.height=canvas.height;
+            t.getContext('2d').drawImage(canvas, 0, 0);
+            ctx.filter = `brightness(${currentSoftwareIsoGain})`;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(t, 0, 0);
+            ctx.filter = 'none';
         }
 
-        // ★ 畫素提升 (Upscale) ★
+        if(isDenoise) {
+            maskText.innerText = "Applying Denoise...";
+            applyFilter(ctx, 'url(#soft-denoise)');
+        }
+
         if(isUpscale) {
             maskText.innerText = "AI Upscaling 2x...";
             if(canvas.width * canvas.height > 20000000) {
@@ -417,16 +446,11 @@
         ctx.filter = 'none';
     }
 
-    function toggleStyle(el, labelId) {
-        document.getElementById(labelId).classList.toggle('active', el.checked);
-    }
-    
-    // EV Slider
+    function toggleStyle(el, labelId) { document.getElementById(labelId).classList.toggle('active', el.checked); }
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
         setEV(parseFloat(this.value));
     };
-
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     init();
