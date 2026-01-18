@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>AI Cam – Smart Lens Detect</title>
+<title>AI Cam – Smart Lens Detect + Tele</title>
 
 <style>
 body{margin:0;background:#000;color:#fff;font-family:-apple-system,Roboto,sans-serif;height:100dvh;display:flex;flex-direction:column}
 .top-bar{background:#111;padding:10px;border-bottom:1px solid #333}
 .row{display:flex;gap:8px;align-items:center}
 select{flex:1;background:#222;color:#fff;border:1px solid #555;padding:6px;border-radius:6px}
-.toggle{background:#222;border:1px solid #444;color:#aaa;padding:5px 10px;border-radius:12px;font-size:11px}
+.toggle{background:#222;border:1px solid #444;color:#aaa;padding:5px 10px;border-radius:12px;font-size:11px;cursor:pointer}
 .toggle.active{border-color:#00d2ff;color:#00d2ff}
 .viewport{flex:1;position:relative;background:#111;display:flex;align-items:center;justify-content:center}
 video{width:100%;height:100%;object-fit:contain}
@@ -21,6 +21,8 @@ video{width:100%;height:100%;object-fit:contain}
 .spinner{width:40px;height:40px;border-radius:50%;border:3px solid #333;border-top:3px solid #00d2ff;animation:spin 1s linear infinite}
 @keyframes spin{100%{transform:rotate(360deg)}}
 canvas{display:none}
+button.lensBtn{padding:4px 8px;border-radius:8px;border:1px solid #444;background:#222;color:#aaa;cursor:pointer;font-size:12px}
+button.lensBtn.active{border-color:#00ff88;color:#00ff88}
 </style>
 </head>
 
@@ -39,6 +41,12 @@ canvas{display:none}
     <button class="toggle active" id="hdrBtn">HDR</button>
     <button class="toggle" id="upscaleBtn">2x AI</button>
     <button class="toggle" id="pngBtn">PNG</button>
+  </div>
+  <div class="row" style="margin-top:5px">
+    <button class="lensBtn" id="mainBtn">主攝</button>
+    <button class="lensBtn" id="tele3Btn">長焦 3x</button>
+    <button class="lensBtn" id="tele5Btn">長焦 5x</button>
+    <button class="lensBtn" id="wideBtn">廣角</button>
   </div>
 </div>
 
@@ -66,15 +74,22 @@ const mask = document.getElementById("mask");
 const maskText = document.getElementById("maskText");
 
 let stream, track, imageCapture;
-let lensMode = "main";
+let lensMode = "main"; // main / tele3 / tele5 / wide
+let devices = [];
 
 document.querySelectorAll(".toggle").forEach(b=>{
   b.onclick=()=>b.classList.toggle("active");
 });
 
+// Lens buttons
+document.getElementById("mainBtn").onclick=()=>switchLens("main");
+document.getElementById("tele3Btn").onclick=()=>switchLens("tele3");
+document.getElementById("tele5Btn").onclick=()=>switchLens("tele5");
+document.getElementById("wideBtn").onclick=()=>switchLens("wide");
+
 async function init(){
   await navigator.mediaDevices.getUserMedia({video:true});
-  const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+  devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
   cameraSelect.innerHTML="";
   devices.forEach(d=>{
     const o=document.createElement("option");
@@ -100,15 +115,32 @@ async function detectAndLaunch(id){
     lensMode="main";
     launch(id,4096,3072,"📸 Main Camera");
   } else if(maxW >= 2000){
-    lensMode="tele";
-    launch(id,1920,1080,"🔭 Telephoto Camera");
+    lensMode="tele3";
+    launch(id,1920,1080,"🔭 Telephoto Camera 3x");
   } else {
     lensMode="wide";
     launch(id,640,480,"🌍 Wide Camera");
   }
 }
 
+async function switchLens(mode){
+  lensMode=mode;
+  if(devices.length===0) return;
+
+  // 選擇第一個鏡頭作為基礎
+  let id = devices[devices.length-1].deviceId;
+  let w=4096,h=3072,label="Main";
+
+  if(mode==="main"){ w=4096; h=3072; label="📸 Main Camera";}
+  if(mode==="tele3"){ w=1920; h=1080; label="🔭 Telephoto 3x";}
+  if(mode==="tele5"){ w=1920; h=1080; label="🔭 Telephoto 5x";}
+  if(mode==="wide"){ w=640; h=480; label="🌍 Wide Camera";}
+
+  launch(id,w,h,label);
+}
+
 async function launch(id,w,h,label){
+  if(stream) stream.getTracks().forEach(t=>t.stop());
   stream = await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:id},width:{ideal:w},height:{ideal:h}}});
   video.srcObject = stream;
   track = stream.getVideoTracks()[0];
