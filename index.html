@@ -3,137 +3,139 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Camera (Zoom 1-8x)</title>
+    <title>AI Pro Camera (HDR + SuperRes)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, sans-serif; color: white; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
         
-        /* 頂部控制面板 */
-        .top-panel { 
-            background: rgba(20, 20, 25, 0.95); padding: 10px; border-bottom: 1px solid #333; 
-            display: flex; flex-direction: column; gap: 8px; z-index: 20;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+        /* 頂部資訊列 */
+        .top-bar { 
+            background: rgba(20,20,20,0.9); padding: 10px 15px; z-index: 20;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid #333;
         }
-        
-        .control-row { display: flex; gap: 10px; align-items: center; }
-        .label { font-size: 12px; color: #aaa; width: 40px; white-space: nowrap; }
-        
-        select, input { 
-            flex-grow: 1; padding: 8px; border-radius: 5px; border: 1px solid #555; 
-            background: #111; color: white; font-size: 13px; outline: none;
-        }
-        
-        .btn-scan { 
-            background: linear-gradient(135deg, #007bff, #00d2ff); color: #000; font-weight: bold;
-            border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap;
-        }
-        .btn-scan:active { transform: scale(0.95); }
+        select { background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 15px; font-size: 13px; max-width: 150px;}
 
-        /* 視窗與 Log */
-        .viewport { flex-grow: 1; position: relative; background: #000; display:flex; justify-content:center; align-items:center;}
+        /* 取景窗 */
+        .viewport { flex-grow: 1; position: relative; background: #000; display:flex; justify-content:center; align-items:center; overflow:hidden;}
         video { width: 100%; height: 100%; object-fit: contain; }
-        
-        #log-overlay {
-            position: absolute; top: 10px; left: 10px; right: 10px;
-            background: rgba(0,0,0,0.6); color: #00ff00; font-family: monospace; font-size: 12px;
-            padding: 8px; border-radius: 5px; pointer-events: none;
-            max-height: 80px; overflow-y: auto; text-shadow: 1px 1px 1px black;
-        }
 
-        /* 底部控制區 (含變焦) */
+        /* 處理中提示 */
+        #status-badge {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(255, 165, 0, 0.9); color: black; padding: 10px 20px;
+            border-radius: 30px; font-weight: bold; font-size: 14px;
+            box-shadow: 0 0 20px rgba(255, 165, 0, 0.5);
+            display: none; z-index: 50; animation: pulse 1s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 0.8; } 50% { opacity: 1; } 100% { opacity: 0.8; } }
+
+        /* 底部控制區 */
         .controls { 
-            background: #111; padding: 15px 25px 30px 25px; 
+            background: rgba(10,10,10,0.95); padding: 20px; 
             display: flex; flex-direction: column; gap: 20px; align-items: center; 
-            z-index: 20;
             padding-bottom: max(30px, env(safe-area-inset-bottom));
+            border-top: 1px solid #222; z-index: 20;
         }
 
-        /* 變焦介面 */
-        .zoom-container {
-            width: 100%; display: flex; align-items: center; gap: 15px;
-            color: #ffd700; font-weight: bold; font-size: 14px;
+        /* 模式切換按鈕群 */
+        .mode-group {
+            display: flex; gap: 5px; background: #222; padding: 4px; border-radius: 25px;
         }
+        .mode-btn {
+            padding: 8px 16px; border: none; background: transparent; color: #888; 
+            font-size: 13px; font-weight: bold; cursor: pointer; border-radius: 20px;
+            transition: 0.2s;
+        }
+        .mode-btn.active { color: #000; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         
-        input[type=range] {
-            flex-grow: 1; height: 6px; border-radius: 3px; background: #444;
-            accent-color: #ffd700; outline: none; -webkit-appearance: none;
-        }
-        
-        /* 快門 */
-        .shutter-btn { 
-            width: 72px; height: 72px; border-radius: 50%; border: 4px solid white; cursor: pointer; 
-            background: transparent; position: relative; transition: 0.1s;
-        }
-        .shutter-btn::after { 
-            content:''; position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); 
-            width:62px; height:62px; background:white; border-radius:50%; 
-        }
-        .shutter-btn:active { transform: scale(0.92); }
-        .shutter-btn:active::after { background:#ccc; }
+        /* 模式顏色定義 */
+        .mode-btn[data-mode="normal"].active { background: #fff; }
+        .mode-btn[data-mode="super-res"].active { background: #00d2ff; }
+        .mode-btn[data-mode="hdr"].active { background: #ffaa00; }
 
-        .hidden { display: none; }
+        /* 變焦 */
+        .zoom-wrap { width: 90%; display: flex; align-items: center; gap: 10px; color: #ffd700; font-size: 14px; font-weight: bold;}
+        input[type=range] { flex-grow: 1; accent-color: #ffd700; height: 4px; }
+
+        /* 快門按鈕 (會隨模式變色) */
+        .shutter-ring {
+            width: 76px; height: 76px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.2);
+            display: flex; justify-content: center; align-items: center; cursor: pointer;
+            transition: 0.2s;
+        }
+        .shutter-inner {
+            width: 60px; height: 60px; border-radius: 50%; transition: 0.3s;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        
+        .shutter-ring:active { transform: scale(0.95); }
+        
+        /* 隱藏畫布 */
+        canvas { display: none; }
     </style>
 </head>
 <body>
 
-    <div class="top-panel">
-        <div class="control-row">
-            <span class="label">鏡頭</span>
-            <select id="cameraSelect"><option>載入中...</option></select>
-        </div>
-        <div class="control-row">
-            <span class="label">Key</span>
-            <input type="password" id="apiKey" placeholder="貼上 API Key">
-            <button class="btn-scan" onclick="scanModels()">🔍 掃描</button>
-        </div>
-        <div class="control-row">
-            <span class="label">模型</span>
-            <select id="modelSelect" style="background:#002244; border-color:#0088ff;">
-                <option value="" disabled selected>請先掃描...</option>
-            </select>
-        </div>
+    <!-- 濾鏡定義 -->
+    <svg style="width:0;height:0;position:absolute;">
+        <defs>
+            <!-- 銳化濾鏡 -->
+            <filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter>
+        </defs>
+    </svg>
+
+    <div class="top-bar">
+        <select id="cameraSelect"><option>Loading...</option></select>
+        <div id="resInfo" style="font-size:12px; color:#aaa;">Init...</div>
     </div>
 
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
-        <div id="log-overlay">系統就緒。請選擇鏡頭。</div>
+        <div id="status-badge">處理中...</div>
     </div>
 
     <div class="controls">
-        <!-- 變焦滑桿 -->
-        <div class="zoom-container">
-            <span style="width:30px; text-align:center;">1x</span>
-            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
-            <span id="zoomVal" style="width:35px; text-align:right;">1.0</span>
+        <!-- 模式切換 -->
+        <div class="mode-group">
+            <button class="mode-btn active" data-mode="normal" onclick="setMode('normal')">一般</button>
+            <button class="mode-btn" data-mode="super-res" onclick="setMode('super-res')">AI 清晰</button>
+            <button class="mode-btn" data-mode="hdr" onclick="setMode('hdr')">HDR</button>
         </div>
 
-        <div class="shutter-btn" onclick="takePhoto()"></div>
+        <!-- 變焦 -->
+        <div class="zoom-wrap">
+            <span>1x</span>
+            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+            <span id="zoomVal" style="width:30px; text-align:right;">1.0</span>
+        </div>
+
+        <!-- 快門 -->
+        <div class="shutter-ring" onclick="capture()">
+            <div class="shutter-inner" id="shutterInner" style="background:white;"></div>
+        </div>
     </div>
 
-    <canvas id="canvas" class="hidden"></canvas>
+    <canvas id="processCanvas"></canvas>
 
 <script>
-    const logDiv = document.getElementById('log-overlay');
-    const cameraSelect = document.getElementById('cameraSelect');
-    const modelSelect = document.getElementById('modelSelect');
-    const apiKeyInput = document.getElementById('apiKey');
     const video = document.getElementById('videoPreview');
+    const cameraSelect = document.getElementById('cameraSelect');
     const zoomSlider = document.getElementById('zoomSlider');
     const zoomVal = document.getElementById('zoomVal');
-    
+    const statusBadge = document.getElementById('status-badge');
+    const shutterInner = document.getElementById('shutterInner');
+    const resInfo = document.getElementById('resInfo');
+
     let currentStream = null;
     let videoTrack = null;
+    let imageCapture = null;
+    let currentMode = 'normal';
 
-    function log(msg) {
-        logDiv.innerHTML = msg; 
-        console.log(msg);
-    }
-
-    // 1. 初始化鏡頭列表
-    async function initCameraList() {
+    // 1. 初始化
+    async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
-
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cams = devices.filter(d => d.kind === 'videoinput');
             
@@ -141,165 +143,222 @@
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
+                opt.text = d.label || `鏡頭 ${i+1}`;
                 cameraSelect.appendChild(opt);
             });
 
             if(cams.length > 0) {
-                // 預設選最後一個 (通常是主攝)
-                const defaultCam = cams[cams.length - 1];
-                cameraSelect.value = defaultCam.deviceId;
-                startCamera(defaultCam.deviceId);
+                // 預設選最後一個 (主攝)
+                const def = cams[cams.length - 1];
+                cameraSelect.value = def.deviceId;
+                startCamera(def.deviceId);
             }
             cameraSelect.onchange = (e) => startCamera(e.target.value);
-
-        } catch(e) { log("❌ 無相機權限"); }
+        } catch(e) { alert("請允許相機權限"); }
     }
 
-    // 2. 啟動鏡頭 & 設定變焦
-    async function startCamera(deviceId) {
+    // 2. 啟動相機
+    async function startCamera(id) {
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
-        zoomSlider.disabled = true; // 切換時先停用變焦
+        zoomSlider.disabled = true;
 
         try {
-            // 嘗試高畫質
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { deviceId: { exact: deviceId }, width: { ideal: 4096 }, height: { ideal: 4096 } } 
-            });
-            setupVideo(stream, "HD模式");
+            // 優先嘗試 4K
+            await launchStream({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 } } });
         } catch(e) {
-            log("⚠️ 切換至標準模式");
-            try {
-                // 降級重試
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { deviceId: { exact: deviceId } } 
-                });
-                setupVideo(stream, "標準模式");
-            } catch(e2) { log("❌ 鏡頭無法啟動"); }
+            // 降級
+            try { await launchStream({ video: { deviceId: { exact: id } } }); } catch(err) {}
         }
     }
 
-    function setupVideo(stream, mode) {
-        video.srcObject = stream;
+    async function launchStream(constraints) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
+        video.srcObject = stream;
         videoTrack = stream.getVideoTracks()[0];
-        
+        if(window.ImageCapture) try{imageCapture = new ImageCapture(videoTrack)}catch(e){}
+
         video.onloadedmetadata = () => {
-            const w = video.videoWidth;
-            const h = video.videoHeight;
-            log(`✅ 已啟動 (${mode}): ${w}x${h}`);
-            
-            // 設定變焦能力
+            resInfo.innerText = `${video.videoWidth}x${video.videoHeight}`;
             const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-            if (caps.zoom) {
+            if(caps.zoom) {
                 zoomSlider.disabled = false;
                 zoomSlider.min = caps.zoom.min;
-                // 設定最大值：取 (硬體極限) 與 (使用者要求的 8倍) 兩者較小者
-                zoomSlider.max = Math.min(caps.zoom.max, 8); 
-                zoomSlider.step = 0.1; // 細緻微調
+                zoomSlider.max = Math.min(caps.zoom.max, 8); // 限制最大 8 倍
+                zoomSlider.step = 0.1;
                 zoomSlider.value = 1;
-                zoomVal.innerText = "1.0";
-                
-                // 顯示實際支援範圍
-                log(`🔍 變焦支援: ${zoomSlider.min}x - ${zoomSlider.max}x`);
-
                 zoomSlider.oninput = function() {
-                    const val = parseFloat(this.value);
-                    zoomVal.innerText = val.toFixed(1);
-                    videoTrack.applyConstraints({advanced: [{zoom: val}]})
-                        .catch(e => console.log("Zoom fail", e));
-                };
-            } else {
-                zoomSlider.disabled = true;
-                zoomVal.innerText = "N/A";
-                log("⚠️ 此鏡頭不支援硬體變焦");
+                    zoomVal.innerText = parseFloat(this.value).toFixed(1);
+                    videoTrack.applyConstraints({advanced:[{zoom:this.value}]});
+                }
             }
         };
     }
 
-    // 3. AI 模型掃描
-    async function scanModels() {
-        const key = apiKeyInput.value.trim();
-        if(!key) return log("❌ 請輸入 Key");
-        log("🔄 掃描中...");
-        
-        try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
-            const data = await res.json();
-            
-            if(data.error) return log(`❌ ${data.error.message}`);
-            
-            const validModels = data.models.filter(m => m.supportedGenerationMethods?.includes("generateContent"));
-            
-            // 排序: 2.5 Flash 第一
-            validModels.sort((a, b) => {
-                const nA = a.name, nB = b.name;
-                if (nA.includes("2.5-flash") && !nB.includes("2.5-flash")) return -1;
-                if (!nA.includes("2.5-flash") && nB.includes("2.5-flash")) return 1;
-                return 0;
-            });
+    // 3. 模式切換邏輯
+    window.setMode = function(mode) {
+        currentMode = mode;
+        document.querySelectorAll('.mode-btn').forEach(b => {
+            b.classList.remove('active');
+            if(b.dataset.mode === mode) b.classList.add('active');
+        });
 
-            modelSelect.innerHTML = '';
-            validModels.forEach(m => {
-                const opt = document.createElement('option');
-                opt.value = m.name;
-                let t = m.name.replace('models/', '');
-                if (t.includes('2.5-flash')) t = `🚀 ${t}`;
-                else if (t.includes('flash')) t = `⚡ ${t}`;
-                opt.text = t;
-                modelSelect.appendChild(opt);
-            });
-            if(modelSelect.options.length > 0) {
-                modelSelect.selectedIndex = 0;
-                log(`✅ 已鎖定: ${modelSelect.options[0].text}`);
-            }
-        } catch(e) { log("❌ 連線錯誤"); }
+        // 改變快門顏色
+        if(mode === 'normal') shutterInner.style.background = 'white';
+        else if(mode === 'super-res') shutterInner.style.background = '#00d2ff';
+        else if(mode === 'hdr') shutterInner.style.background = '#ffaa00';
     }
 
-    // 4. 拍照
-    async function takePhoto() {
-        const selectedModel = modelSelect.value;
-        const key = apiKeyInput.value.trim();
-        if(!selectedModel) return alert("請先掃描模型！");
+    // 4. 拍攝總控
+    window.capture = async function() {
+        const btn = document.querySelector('.shutter-ring');
+        btn.style.transform = 'scale(0.8)';
+        setTimeout(() => btn.style.transform = 'scale(1)', 100);
 
-        const canvas = document.getElementById('canvas');
-        // 縮圖至 1024px 以加速 AI
-        const scale = Math.min(1024/video.videoWidth, 1024/video.videoHeight, 1);
-        canvas.width = video.videoWidth * scale;
-        canvas.height = video.videoHeight * scale;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        if(currentMode === 'normal') {
+            await processNormal();
+        } else if(currentMode === 'super-res') {
+            await processSuperRes();
+        } else if(currentMode === 'hdr') {
+            await processHDR();
+        }
+    }
+
+    // 輔助：抓圖
+    async function grabImage() {
+        if(imageCapture) {
+            try { return await imageCapture.grabFrame(); } catch(e){}
+        }
+        const cvs = document.createElement('canvas');
+        cvs.width = video.videoWidth; cvs.height = video.videoHeight;
+        cvs.getContext('2d').drawImage(video,0,0);
+        return cvs;
+    }
+
+    // --- 模式 A: 一般 ---
+    async function processNormal() {
+        const bmp = await grabImage();
+        save(bmp, "Normal");
+    }
+
+    // --- 模式 B: AI 超清晰 (疊圖降噪) ---
+    async function processSuperRes() {
+        statusBadge.innerText = "⚡ AI 降噪運算中...";
+        statusBadge.style.display = 'block';
+        statusBadge.style.background = 'rgba(0, 210, 255, 0.9)';
         
-        const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-        const shortName = selectedModel.replace('models/', '');
-        
-        log(`📷 傳送中 (${shortName})...`);
+        try {
+            const frames = [];
+            // 連拍 4 張
+            for(let i=0; i<4; i++) {
+                frames.push(await grabImage());
+                await new Promise(r => setTimeout(r, 20)); // 微延遲
+            }
+
+            const w = frames[0].width;
+            const h = frames[0].height;
+            const canvas = document.getElementById('processCanvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+
+            // 平均疊加
+            frames.forEach((f, i) => {
+                ctx.globalAlpha = 1 / (i + 1);
+                ctx.drawImage(f, 0, 0);
+            });
+            ctx.globalAlpha = 1;
+
+            // 銳化濾鏡
+            applyFilter(ctx, w, h, 'url(#smart-sharpen) contrast(1.05)');
+            
+            save(canvas, "SuperRes");
+        } catch(e) { alert("Error"); } 
+        finally { statusBadge.style.display = 'none'; }
+    }
+
+    // --- 模式 C: HDR (高動態範圍) ---
+    async function processHDR() {
+        statusBadge.innerText = "🌞 HDR 合成中...";
+        statusBadge.style.display = 'block';
+        statusBadge.style.background = 'rgba(255, 170, 0, 0.9)';
 
         try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${selectedModel}:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [
-                            { text: "請分析照片：1.畫質 2.光線 3.建議 (繁體中文, 50字內)" },
-                            { inline_data: { mime_type: "image/jpeg", data: base64 } }
-                        ]
-                    }]
-                })
-            });
-            const data = await res.json();
-            if(data.error) {
-                log("❌ 分析失敗");
-                alert(data.error.message);
-            } else {
-                log("✅ 分析完成");
-                alert(data.candidates[0].content.parts[0].text);
-            }
-        } catch(e) { log("❌ 網路錯誤"); }
+            // 抓取原圖 (最好抓兩張取平均減少基底雜訊)
+            const base1 = await grabImage();
+            await new Promise(r => setTimeout(r, 30));
+            const base2 = await grabImage();
+
+            const w = base1.width;
+            const h = base1.height;
+            const canvas = document.getElementById('processCanvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+
+            // 1. 基底層 (Base)
+            ctx.drawImage(base1, 0, 0);
+            ctx.globalAlpha = 0.5;
+            ctx.drawImage(base2, 0, 0); // 簡單降噪
+            ctx.globalAlpha = 1;
+
+            // 2. 模擬 HDR：暗部提亮層 (Shadow Lift)
+            // 原理：使用 Screen 模式疊加同一張圖，會讓黑色變透，白色變亮，整體提亮暗部
+            const tempCvs = document.createElement('canvas');
+            tempCvs.width = w; tempCvs.height = h;
+            const tempCtx = tempCvs.getContext('2d');
+            tempCtx.drawImage(canvas, 0, 0);
+
+            ctx.globalCompositeOperation = 'screen'; 
+            ctx.filter = 'brightness(0.6) contrast(1.1)'; // 不要太亮，只需補光
+            ctx.drawImage(tempCvs, 0, 0);
+            
+            // 3. 模擬 HDR：細節增強 (Local Contrast)
+            // 原理：使用 Soft-light 模式疊加，增加層次感
+            ctx.globalCompositeOperation = 'soft-light';
+            ctx.filter = 'saturate(1.2)'; // HDR 通常色彩較飽和
+            ctx.drawImage(tempCvs, 0, 0);
+
+            // 4. 重置混合模式
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.filter = 'none';
+
+            save(canvas, "HDR");
+
+        } catch(e) { 
+            console.error(e);
+            alert("HDR 處理失敗"); 
+        } finally { 
+            statusBadge.style.display = 'none'; 
+        }
     }
-    
-    initCameraList();
+
+    // 通用工具
+    function applyFilter(ctx, w, h, filterStr) {
+        const temp = document.createElement('canvas');
+        temp.width = w; temp.height = h;
+        temp.getContext('2d').drawImage(ctx.canvas, 0, 0);
+        ctx.filter = filterStr;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(temp, 0, 0);
+        ctx.filter = 'none';
+    }
+
+    function save(source, prefix) {
+        const canvas = document.getElementById('processCanvas');
+        if(source !== canvas) {
+            canvas.width = source.width; canvas.height = source.height;
+            canvas.getContext('2d').drawImage(source, 0, 0);
+        }
+        
+        const link = document.createElement('a');
+        link.download = `${prefix}_${Date.now()}.jpg`;
+        // HDR 與 AI 模式使用最高品質存檔
+        link.href = canvas.toDataURL('image/jpeg', 0.95);
+        link.click();
+    }
+
+    init();
 </script>
 </body>
 </html>
+
 
