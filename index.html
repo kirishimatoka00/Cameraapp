@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Cam (Fixed VGA Preview)</title>
+    <title>AI Cam (ISO + Denoise)</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
@@ -20,7 +20,7 @@
         
         /* 功能開關 */
         .toggle-btn {
-            background: #222; border: 1px solid #444; color: #aaa; padding: 4px 10px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+            background: #222; border: 1px solid #444; color: #aaa; padding: 4px 8px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap;
         }
         .toggle-btn input { margin: 0; }
         .toggle-btn.active { border-color: #00d2ff; color: #00d2ff; font-weight: bold; }
@@ -53,24 +53,27 @@
         
         /* 底部 */
         .controls { 
-            background: #111; padding: 15px 20px; flex-shrink: 0; z-index: 20;
-            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 15px; align-items: center;
-            padding-bottom: max(25px, env(safe-area-inset-bottom));
+            background: #111; padding: 10px 20px; flex-shrink: 0; z-index: 20;
+            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 10px; align-items: center;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
-        .slider-row { width: 100%; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: bold; color: #aaa; }
+        .slider-row { width: 100%; display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: bold; color: #aaa; }
+        .label { width: 35px; text-align: right; }
         input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #444; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
         
         .ac-zoom input { accent-color: #00ff88; }
         .ac-ev input { accent-color: #00d2ff; }
+        .ac-iso input { accent-color: #ff0055; } /* ISO 紅色 */
 
         .shutter {
-            width: 72px; height: 72px; border-radius: 50%;
+            width: 68px; height: 68px; border-radius: 50%;
             border: 4px solid rgba(255,255,255,0.3);
             background: radial-gradient(circle, #fff 30%, #00d2ff 100%);
             cursor: pointer; transition: 0.1s; position: relative;
             box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+            margin-top: 5px;
         }
         .shutter:active { transform: scale(0.95); }
 
@@ -80,28 +83,39 @@
 </head>
 <body>
 
+    <!-- 濾鏡定義 -->
     <svg style="width:0;height:0;position:absolute;">
         <defs>
+            <!-- 智慧銳化 -->
             <filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter>
+            <!-- 畫素提升銳化 -->
             <filter id="upscale-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -0.5 0 -0.5 3 -0.5 0 -0.5 0"/></filter>
+            <!-- 降噪濾鏡 (柔化顆粒) -->
+            <filter id="soft-denoise">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur"/>
+                <feComposite in="SourceGraphic" in2="blur" operator="arithmetic" k1="0" k2="0.6" k3="0.4" k4="0"/>
+            </filter>
         </defs>
     </svg>
 
     <div class="top-bar">
         <div class="row">
             <select id="cameraSelect"><option>Loading...</option></select>
-            <select id="hdrCount" style="max-width: 60px;">
-                <option value="3">3張</option>
-                <option value="5">5張</option>
-                <option value="7">7張</option>
+            <select id="hdrCount" style="max-width: 50px;">
+                <option value="3">3x</option>
+                <option value="5">5x</option>
+                <option value="7">7x</option>
             </select>
         </div>
-        <div class="row">
+        <div class="row" style="justify-content: flex-start; gap: 5px; flex-wrap: wrap;">
             <label class="toggle-btn active" id="hdrBtn">
                 <input type="checkbox" id="hdrToggle" checked onchange="toggleStyle(this, 'hdrBtn')"> HDR
             </label>
             <label class="toggle-btn" id="upscaleBtn">
-                <input type="checkbox" id="upscaleToggle" onchange="toggleStyle(this, 'upscaleBtn')"> 2x AI Upscale
+                <input type="checkbox" id="upscaleToggle" onchange="toggleStyle(this, 'upscaleBtn')"> 2x AI
+            </label>
+            <label class="toggle-btn" id="denoiseBtn">
+                <input type="checkbox" id="denoiseToggle" onchange="toggleStyle(this, 'denoiseBtn')"> 降噪
             </label>
             <label class="toggle-btn" id="rawBtn">
                 <input type="checkbox" id="rawToggle" onchange="toggleStyle(this, 'rawBtn')"> PNG
@@ -120,15 +134,23 @@
     </div>
 
     <div class="controls">
-        <div class="slider-row ac-ev">
-            <span>EV</span>
-            <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
-            <span id="evText" style="width:25px; text-align:right">0</span>
+        <!-- ISO 滑桿 (新增) -->
+        <div class="slider-row ac-iso">
+            <span class="label">ISO</span>
+            <input type="range" id="isoSlider" min="100" max="3200" step="50" value="0" disabled>
+            <span id="isoText" style="width:35px; text-align:right">Auto</span>
         </div>
+        <!-- EV 滑桿 -->
+        <div class="slider-row ac-ev">
+            <span class="label">EV</span>
+            <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
+            <span id="evText" style="width:35px; text-align:right">0</span>
+        </div>
+        <!-- Zoom 滑桿 -->
         <div class="slider-row ac-zoom">
-            <span>Zoom</span>
+            <span class="label">Zoom</span>
             <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
-            <span id="zoomText" style="width:25px; text-align:right">1.0</span>
+            <span id="zoomText" style="width:35px; text-align:right">1.0</span>
         </div>
         <div class="shutter" onclick="capture()"></div>
     </div>
@@ -145,9 +167,9 @@
     
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
-    let isSafeMode = false; // 標記是否為低畫質預覽模式
+    let hardwareIso = false;
+    let isSafeMode = false;
 
-    // 初始化
     async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -161,13 +183,11 @@
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
                 opt.text = d.label || `Camera ${i} (ID:${i})`;
-                // 將索引值存入 dataset，方便後續判斷
                 opt.dataset.index = i;
                 cameraSelect.appendChild(opt);
             });
 
             if(cams.length > 0) {
-                // 預設選最後一個 (通常是主攝)
                 const lastIdx = cams.length - 1;
                 cameraSelect.selectedIndex = lastIdx;
                 switchCamera(cams[lastIdx].deviceId, lastIdx);
@@ -181,31 +201,20 @@
         } catch(e) { alert("請允許相機權限"); }
     }
 
-    // ★★★ 核心修正：強制 VGA 邏輯 ★★★
     async function switchCamera(id, index) {
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
         statusPill.innerText = "切換中...";
         isSafeMode = false;
 
         try {
-            // 邏輯判斷：如果是 Camera 2 (通常是廣角)，直接走 VGA
-            if (index === 2) {
-                console.log("Force VGA for Camera 2");
-                await launch({ 
-                    video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } 
-                }, "Wide/VGA (HQ Photo)");
-                isSafeMode = true; // 標記為安全模式，拍照時會強制走慢速高畫質
-            } 
-            else {
-                // 其他鏡頭嘗試 4K
-                await launch({ 
-                    video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } 
-                }, "4K Preview");
+            if (index === 2) { // 假設廣角鏡是 ID 2
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA (HQ Photo)");
+                isSafeMode = true; 
+            } else {
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K Preview");
             }
         } catch(e1) {
-            console.log("Primary launch failed, fallback...");
             try {
-                // 保底嘗試
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Safe Preview");
                 isSafeMode = true; 
             } catch(e2) {
@@ -227,7 +236,7 @@
 
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
         
-        // 變焦
+        // 1. Zoom 設定
         const zs = document.getElementById('zoomSlider');
         if(caps.zoom) {
             zs.disabled = false;
@@ -240,6 +249,31 @@
             }
         } else { zs.disabled = true; }
 
+        // 2. ISO 設定 (新增)
+        const is = document.getElementById('isoSlider');
+        if(caps.iso) {
+            hardwareIso = true;
+            is.disabled = false;
+            is.min = caps.iso.min;
+            is.max = caps.iso.max;
+            is.value = is.min; // 預設最小值或自動
+            document.getElementById('isoText').innerText = "Auto";
+            
+            is.oninput = function() {
+                const val = parseInt(this.value);
+                document.getElementById('isoText').innerText = val;
+                // 設定 ISO 通常需要將 exposureMode 設為 manual，但部分瀏覽器支援直接設定
+                videoTrack.applyConstraints({
+                    advanced: [{ iso: val }]
+                }).catch(e => console.log("ISO set fail"));
+            };
+        } else {
+            hardwareIso = false;
+            is.disabled = true;
+            document.getElementById('isoText').innerText = "N/A";
+        }
+
+        // 3. EV 設定
         hardwareExposure = !!caps.exposureCompensation;
         
         video.onloadedmetadata = () => {
@@ -260,28 +294,22 @@
         try {
             if(!isHdr) {
                 maskText.innerText = "Capturing HQ...";
-                // 強制使用高畫質擷取
                 const bmp = await grabHighQuality(true); 
                 await finalize(bmp, "Photo");
             } else {
                 const count = parseInt(document.getElementById('hdrCount').value);
                 const frames = [];
                 const startEv = -((count-1)/2); 
-                
-                // 如果是 SafeMode (VGA預覽)，連拍必須強制用 takePhoto
                 const useSlowPath = isSafeMode; 
 
                 for(let i=0; i<count; i++) {
                     const ev = startEv + i;
                     maskText.innerText = `HDR ${i+1}/${count}`;
-                    
                     await setEV(ev);
                     await sleep(useSlowPath ? 400 : 150); 
-                    
                     const bmp = await grabHighQuality(useSlowPath); 
                     frames.push({ ev: ev, img: bmp });
                 }
-                
                 await setEV(0);
                 maskText.innerText = "Merging...";
                 await processHDR(frames);
@@ -293,20 +321,13 @@
         }
     }
 
-    // ★ 關鍵：強制獲取高品質影像 ★
     async function grabHighQuality(forceTakePhoto = false) {
-        // 如果有 ImageCapture 且 (強制慢速模式 或 預設優先)，嘗試 takePhoto
-        // 這能繞過 VGA 預覽，直接命令硬體拍出原圖
         if(imageCapture && (forceTakePhoto || true)) { 
             try {
                 const blob = await imageCapture.takePhoto();
                 return await createImageBitmap(blob);
-            } catch(e) { 
-                console.log("takePhoto failed, fallback to grabFrame"); 
-            }
+            } catch(e) { console.log("fallback"); }
         }
-        
-        // 備援：如果 takePhoto 失敗，只好抓截圖 (如果是 SafeMode，這張會是 VGA)
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
         c.getContext('2d').drawImage(video, 0, 0);
@@ -322,8 +343,8 @@
         const ctx = canvas.getContext('2d');
         
         ctx.drawImage(base.img, 0, 0);
-
         ctx.globalAlpha = 0.5; 
+        
         frames.forEach(f => {
             if(f.ev < 0) {
                 ctx.globalCompositeOperation = 'darken';
@@ -336,6 +357,8 @@
 
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
+        
+        // 基礎銳化
         applyFilter(ctx, 'url(#smart-sharpen) contrast(1.1)');
         
         await finalize(canvas, "HDR");
@@ -343,6 +366,7 @@
 
     async function finalize(source, prefix) {
         const isUpscale = document.getElementById('upscaleToggle').checked;
+        const isDenoise = document.getElementById('denoiseToggle').checked; // 讀取降噪設定
         const isPng = document.getElementById('rawToggle').checked;
         
         let canvas = document.getElementById('cFinal');
@@ -351,10 +375,17 @@
             canvas.getContext('2d').drawImage(source, 0, 0);
         } else { canvas = source; }
 
+        // ★ 降噪處理 (Denoise) ★
+        if(isDenoise) {
+            maskText.innerText = "Applying Denoise...";
+            applyFilter(canvas.getContext('2d'), 'url(#soft-denoise)');
+        }
+
+        // ★ 畫素提升 (Upscale) ★
         if(isUpscale) {
-            maskText.innerText = "Upscaling...";
+            maskText.innerText = "AI Upscaling 2x...";
             if(canvas.width * canvas.height > 20000000) {
-                console.log("Too big to upscale");
+                console.log("Too big");
             } else {
                 const upCvs = document.getElementById('cUpscale');
                 upCvs.width = canvas.width * 2; upCvs.height = canvas.height * 2;
@@ -390,6 +421,7 @@
         document.getElementById(labelId).classList.toggle('active', el.checked);
     }
     
+    // EV Slider
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
         setEV(parseFloat(this.value));
