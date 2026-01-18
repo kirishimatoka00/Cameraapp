@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>50MP Raw-Like Camera</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #000; 
+            overflow: hidden; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            color: white;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* 影片預覽區，確保佔滿且維持比例 */
+        .video-container {
+            flex-grow: 1;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+        }
+
+        /* 控制介面層 */
+        .controls {
+            background: rgba(0,0,0,0.8);
+            padding: 20px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            z-index: 10;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+        }
+
+        /* 變焦區域 */
+        .zoom-wrapper {
+            width: 90%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .zoom-slider-container {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        input[type=range] {
+            flex-grow: 1;
+            height: 4px;
+            background: #555;
+            border-radius: 2px;
+            appearance: none;
+            outline: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        /* 快門按鈕 */
+        .shutter-btn {
+            width: 72px;
+            height: 72px;
+            background-color: white;
+            border-radius: 50%;
+            border: 4px solid #444;
+            outline: 2px solid white;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .shutter-btn:active { 
+            background-color: #ddd; 
+            transform: scale(0.9); 
+        }
+
+        /* 狀態顯示 */
+        #status-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            text-shadow: 1px 1px 2px black;
+        }
+        
+        .badge {
+            background: rgba(255, 0, 0, 0.6);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .info-text {
+            font-size: 12px;
+            color: #eee;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="video-container">
+        <video id="videoPreview" autoplay playsinline></video>
+        <div id="status-bar">
+            <div id="res-info" class="info-text">解析度: 初始化中...</div>
+            <div id="mode-badge" class="badge" style="display:none">RAW-Like</div>
+        </div>
+    </div>
+    
+    <!-- 隱藏畫布用於處理影像 -->
+    <canvas id="photoCanvas" style="display:none;"></canvas>
+
+    <div class="controls">
+        <!-- 變焦顯示數值 -->
+        <div id="zoomValueDisplay" style="font-size:14px; color:#f0d700;">1.0x</div>
+
+        <!-- 變焦拉桿 -->
+        <div class="zoom-wrapper">
+            <div class="zoom-slider-container">
+                <span>1x</span>
+                <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" disabled>
+                <span>10x</span>
+            </div>
+        </div>
+
+        <!-- 快門 -->
+        <button class="shutter-btn" id="shutterBtn"></button>
+    </div>
+
+<script>
+    const video = document.getElementById('videoPreview');
+    const canvas = document.getElementById('photoCanvas');
+    const resInfo = document.getElementById('res-info');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomDisplay = document.getElementById('zoomValueDisplay');
+    const shutterBtn = document.getElementById('shutterBtn');
+    const modeBadge = document.getElementById('mode-badge');
+
+    let imageCapture;
+    let videoTrack;
+    let capabilities;
+    let currentZoom = 1;
+
+    // 初始化相機
+    async function initCamera() {
+        try {
+            // 請求瀏覽器能給的最大解析度 (嘗試觸發 4K 或更高)
+            const constraints = {
+                audio: false,
+                video: {
+                    facingMode: { exact: "environment" }, // 強制後鏡頭
+                    width: { ideal: 10000 },
+                    height: { ideal: 10000 },
+                    focusMode: { ideal: "continuous" }
+                }
+            };
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            
+            videoTrack = stream.getVideoTracks()[0];
+            
+            // 嘗試初始化 ImageCapture (Chrome/Android 支援度較好)
+            if (window.ImageCapture) {
+                imageCapture = new ImageCapture(videoTrack);
+            }
+
+            // 等待串流穩定後檢查功能
+            video.onloadedmetadata = () => {
+                setTimeout(checkCapabilities, 500);
+            };
+
+        } catch (error) {
+            console.warn("後鏡頭啟動失敗，切換至相容模式", error);
+            try {
+                // 降級嘗試：不強制指定解析度與鏡頭
+                const fallbackStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = fallbackStream;
+                videoTrack = fallbackStream.getVideoTracks()[0];
+                if (window.ImageCapture) imageCapture = new ImageCapture(videoTrack);
+                video.onloadedmetadata = () => setTimeout(checkCapabilities, 500);
+            } catch (e) {
+                alert("無法啟動相機: " + e.message);
+                resInfo.innerText = "錯誤: 無相機權限";
+            }
+        }
+    }
+
+    // 檢查硬體能力 (變焦與解析度)
+    function checkCapabilities() {
+        const settings = videoTrack.getSettings();
+        
+        // 顯示當前實際獲得的解析度
+        resInfo.innerText = `串流: ${settings.width} x ${settings.height} px`;
+
+        // 檢查是否支援硬體變焦
+        capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        
+        if (capabilities.zoom) {
+            zoomSlider.min = capabilities.zoom.min;
+            zoomSlider.max = capabilities.zoom.max;
+            zoomSlider.step = capabilities.zoom.step;
+            zoomSlider.value = settings.zoom || 1;
+            zoomSlider.disabled = false;
+            
+            zoomSlider.oninput = function() {
+                const zoomValue = parseFloat(this.value);
+                currentZoom = zoomValue;
+                zoomDisplay.innerText = `${zoomValue.toFixed(1)}x`;
+                videoTrack.applyConstraints({
+                    advanced: [{ zoom: zoomValue }]
+                }).catch(e => console.log("變焦套用失敗", e));
+            };
+        } else {
+            // 不支援硬體變焦
+            zoomDisplay.innerText = "硬體變焦無法使用";
+            zoomSlider.style.opacity = "0.3";
+        }
+    }
+
+    // 拍照核心邏輯
+    shutterBtn.onclick = async function() {
+        // 動畫回饋
+        shutterBtn.style.backgroundColor = "#ccc";
+        setTimeout(() => shutterBtn.style.backgroundColor = "white", 100);
+        
+        resInfo.innerText = "擷取影像資料中...";
+
+        try {
+            let finalBlob = null;
+            let width = 0;
+            let height = 0;
+
+            // 策略 A: 優先使用 ImageCapture (通常解析度較高，接近相片模式)
+            if (imageCapture) {
+                try {
+                    const blob = await imageCapture.takePhoto();
+                    const bitmap = await createImageBitmap(blob);
+                    width = bitmap.width;
+                    height = bitmap.height;
+                    
+                    // 重新繪製到 Canvas 以確保我們可以控制輸出格式
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(bitmap, 0, 0);
+                    
+                    finalBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                } catch (e) {
+                    console.log("ImageCapture 失敗，切換至備用方案");
+                }
+            }
+
+            // 策略 B: 如果策略 A 失敗 (例如在 iOS Safari)，直接抓取 Video Frame
+            if (!finalBlob) {
+                width = video.videoWidth;
+                height = video.videoHeight;
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, width, height);
+                finalBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            }
+
+            // 執行下載
+            const url = URL.createObjectURL(finalBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `RAW_LIKE_${Date.now()}_${width}x${height}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            resInfo.innerText = `已儲存: ${width} x ${height} (PNG無損)`;
+
+        } catch (error) {
+            console.error(error);
+            alert("拍攝失敗: " + error.message);
+        }
+    };
+
+    // 啟動程式
+    initCamera();
+
+</script>
+</body>
+</html>
