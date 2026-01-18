@@ -3,43 +3,65 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>IR Spectrum Assist Camera</title>
+    <title>Web Pro Camera (AI Edition)</title>
     <style>
+        /* --- 基礎 UI 風格 --- */
         body { 
             margin: 0; 
             background: #000; 
-            font-family: monospace; 
-            color: #0f0; /* 駭客風格綠色字體 */
+            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            color: white;
             height: 100vh;
             overflow: hidden;
             display: flex;
             flex-direction: column;
         }
 
+        /* 頂部工具列 */
         .top-bar {
-            padding: 10px;
-            background: #111;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.4));
+            padding: 15px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #333;
             z-index: 20;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         select {
-            background: #222;
-            color: #0f0;
-            border: 1px solid #0f0;
-            padding: 5px;
-            max-width: 150px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 6px 10px;
+            border-radius: 20px;
+            font-size: 14px;
+            backdrop-filter: blur(5px);
         }
+
+        /* 智慧增強開關 */
+        .enhance-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            background: rgba(0, 150, 255, 0.2);
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(0, 150, 255, 0.5);
+        }
+        
+        .enhance-toggle input { margin: 0; }
+        .enhance-active { box-shadow: 0 0 10px rgba(0, 150, 255, 0.6); }
 
         /* 視窗區域 */
         .viewport {
             flex-grow: 1;
             position: relative;
             background: #000;
-            overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -49,130 +71,173 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
-            /* 預設無濾鏡 */
-            filter: none; 
-            transition: filter 0.3s;
         }
 
-        /* 紅外線模式的 CSS 濾鏡模擬 */
-        /* 去色 + 極高對比 + 拉高亮度 (模擬夜視鏡效果) */
-        .ir-mode {
-            filter: grayscale(100%) contrast(200%) brightness(150%) !important;
-        }
-
+        /* 底部控制區 */
         .controls {
-            padding: 20px;
-            background: #111;
-            border-top: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            padding: 20px 20px 40px 20px;
             display: flex;
             flex-direction: column;
-            gap: 15px;
             align-items: center;
+            gap: 20px;
             z-index: 20;
+            backdrop-filter: blur(10px);
         }
 
-        /* IR 開關 */
-        .ir-toggle {
+        /* 變焦滑桿 */
+        .zoom-panel {
+            width: 90%;
             display: flex;
             align-items: center;
-            gap: 10px;
-            border: 1px solid #333;
-            padding: 5px 10px;
-            border-radius: 20px;
-            background: #000;
+            gap: 15px;
+            color: #ffd700;
+            font-weight: bold;
+            font-size: 14px;
         }
-
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 24px;
-        }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #333;
-            transition: .4s;
-            border-radius: 24px;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px; width: 18px;
-            left: 3px; bottom: 3px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        }
-        input:checked + .slider { background-color: #f00;box-shadow: 0 0 10px #f00; }
-        input:checked + .slider:before { transform: translateX(26px); }
-
-        /* 變焦 */
+        
         input[type=range] {
-            width: 90%;
-            accent-color: #0f0;
+            flex-grow: 1;
+            height: 4px;
+            background: #555;
+            border-radius: 2px;
+            accent-color: #ffd700;
         }
 
+        /* 快門按鈕 */
         .shutter-btn {
-            width: 70px; height: 70px;
+            width: 72px;
+            height: 72px;
             border-radius: 50%;
+            border: 4px solid white;
             background: transparent;
-            border: 4px solid #fff;
             position: relative;
             cursor: pointer;
+            transition: 0.1s;
         }
+        
         .shutter-btn::after {
             content: '';
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 56px; height: 56px;
-            background: #fff;
+            width: 60px; height: 60px;
+            background: white;
             border-radius: 50%;
+            transition: 0.2s;
         }
-        .shutter-btn:active::after { background: #aaa; transform: translate(-50%, -50%) scale(0.9); }
+        
+        .shutter-btn:active::after { 
+            width: 50px; height: 50px; 
+            background: #ccc;
+        }
 
-        #debug-text { font-size: 10px; color: #555; position: absolute; bottom: 5px; right: 5px; }
+        /* Gemini AI 面板 */
+        #gemini-panel {
+            position: absolute;
+            bottom: 150px; /* 位於控制區上方 */
+            left: 20px;
+            right: 20px;
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #444;
+            border-radius: 12px;
+            padding: 15px;
+            display: none; /* 預設隱藏 */
+            z-index: 30;
+            color: #ccc;
+            font-size: 13px;
+        }
+        
+        #gemini-panel h3 { margin: 0 0 10px 0; color: #4facfe; font-size: 15px; display:flex; align-items:center; gap:5px;}
+        #gemini-content { max-height: 100px; overflow-y: auto; line-height: 1.4; margin-bottom: 10px;}
+        .api-input { width: 100%; padding: 8px; background:#111; border:1px solid #444; color:white; border-radius:4px; box-sizing: border-box; margin-bottom: 5px;}
+        
+        .btn-small {
+            background: #444; color: white; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;
+        }
+        .btn-gemini { background: linear-gradient(45deg, #4facfe, #00f2fe); color: #000; font-weight: bold; }
+
+        /* SVG 濾鏡 (隱藏) */
+        .svg-filters { position: absolute; width: 0; height: 0; overflow: hidden; }
+        
+        /* 狀態標籤 */
+        .badge {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: rgba(0,0,0,0.6);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #aaa;
+        }
     </style>
 </head>
 <body>
 
+    <!-- SVG 濾鏡定義：用於 Canvas 的智慧銳化 -->
+    <svg class="svg-filters">
+        <defs>
+            <filter id="smart-sharpen">
+                <!-- 卷積矩陣銳化濾鏡 -->
+                <feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" preserveAlpha="true"/>
+            </filter>
+        </defs>
+    </svg>
+
     <div class="top-bar">
         <select id="cameraSelect"><option>Loading...</option></select>
-        <div class="ir-toggle">
-            <span>IR 增強</span>
-            <label class="switch">
-                <input type="checkbox" id="irCheck">
-                <span class="slider"></span>
-            </label>
-        </div>
+        
+        <label class="enhance-toggle" id="enhanceLabel">
+            <input type="checkbox" id="enhanceCheck" checked>
+            <span>✨ 智慧增強</span>
+        </label>
     </div>
 
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
-        <div id="debug-text">Res: --</div>
+        <div class="badge" id="resDisplay">等待啟動...</div>
+    </div>
+
+    <!-- Gemini AI 面板 -->
+    <div id="gemini-panel">
+        <h3>✨ Gemini AI 分析</h3>
+        <input type="password" id="apiKeyInput" class="api-input" placeholder="貼上 Gemini API Key (選填)">
+        <div id="gemini-content">輸入 Key 後，拍照時將自動分析照片品質...</div>
+        <div style="text-align: right;">
+            <button class="btn-small" onclick="document.getElementById('gemini-panel').style.display='none'">關閉</button>
+        </div>
     </div>
 
     <div class="controls">
-        <div style="width:100%; display:flex; justify-content:space-between; font-size:12px;">
-            <span>Zoom: <span id="zoomVal">1.0</span>x</span>
+        <div class="zoom-panel">
+            <span>1.0x</span>
+            <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" disabled>
+            <span id="zoomVal">1.0</span>
         </div>
-        <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" disabled>
-        
-        <div class="shutter-btn" id="shutterBtn"></div>
+
+        <div style="display:flex; gap:20px; align-items:center;">
+            <button class="btn-small" onclick="document.getElementById('gemini-panel').style.display='block'">🤖 設定 AI</button>
+            <div class="shutter-btn" id="shutterBtn"></div>
+        </div>
     </div>
-    
+
     <canvas id="photoCanvas" style="display:none;"></canvas>
 
 <script>
     const video = document.getElementById('videoPreview');
     const cameraSelect = document.getElementById('cameraSelect');
-    const irCheck = document.getElementById('irCheck');
     const zoomSlider = document.getElementById('zoomSlider');
+    const zoomVal = document.getElementById('zoomVal');
+    const resDisplay = document.getElementById('resDisplay');
+    const enhanceCheck = document.getElementById('enhanceCheck');
+    const enhanceLabel = document.getElementById('enhanceLabel');
     const shutterBtn = document.getElementById('shutterBtn');
-    const debugText = document.getElementById('debug-text');
+    
+    // Gemini 相關
+    const geminiPanel = document.getElementById('gemini-panel');
+    const geminiContent = document.getElementById('gemini-content');
+    const apiKeyInput = document.getElementById('apiKeyInput');
 
     let currentStream = null;
     let videoTrack = null;
@@ -181,114 +246,212 @@
     // 1. 初始化
     async function init() {
         try {
+            // 請求權限
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
-            
+
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            
+
             cameraSelect.innerHTML = '';
-            videoDevices.forEach(device => {
+            videoDevices.forEach(d => {
                 const opt = document.createElement('option');
-                opt.value = device.deviceId;
-                opt.text = device.label || `Camera ${cameraSelect.length + 1}`;
+                opt.value = d.deviceId;
+                opt.text = d.label || `Camera ${cameraSelect.length + 1}`;
                 cameraSelect.appendChild(opt);
             });
 
-            // 預設選最後一個 (通常是主鏡頭)
-            if(videoDevices.length > 0) {
-                cameraSelect.value = videoDevices[videoDevices.length - 1].deviceId;
+            if (videoDevices.length > 0) {
+                // 嘗試預選後鏡頭
+                const backCam = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+                cameraSelect.value = backCam ? backCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
                 startCamera(cameraSelect.value);
             }
 
             cameraSelect.onchange = (e) => startCamera(e.target.value);
+
+            // UI 互動
+            enhanceCheck.onchange = () => {
+                if(enhanceCheck.checked) {
+                    enhanceLabel.classList.add('enhance-active');
+                    resDisplay.innerText += " (AI Ready)";
+                } else {
+                    enhanceLabel.classList.remove('enhance-active');
+                }
+            };
 
         } catch (e) {
             alert("請允許相機權限");
         }
     }
 
-    // 2. 啟動相機
+    // 2. 啟動相機 (Max Res)
     async function startCamera(id) {
-        if(currentStream) currentStream.getTracks().forEach(t => t.stop());
+        if (currentStream) currentStream.getTracks().forEach(t => t.stop());
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
+            const constraints = {
                 video: {
                     deviceId: { exact: id },
-                    width: { ideal: 4096 },
+                    width: { ideal: 4096 }, // 嘗試 4K
                     height: { ideal: 4096 }
                 }
-            });
-            
+            };
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             currentStream = stream;
             video.srcObject = stream;
             videoTrack = stream.getVideoTracks()[0];
-            
-            if(window.ImageCapture) imageCapture = new ImageCapture(videoTrack);
+
+            if (window.ImageCapture) imageCapture = new ImageCapture(videoTrack);
 
             video.onloadedmetadata = () => {
-                debugText.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
+                const w = video.videoWidth;
+                const h = video.videoHeight;
+                resDisplay.innerText = `Raw Res: ${w} x ${h}`;
                 checkZoom();
-            }
-        } catch(e) {
+            };
+        } catch (e) {
             console.error(e);
         }
     }
 
-    // 3. 變焦邏輯
+    // 3. 變焦
     function checkZoom() {
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        if(caps.zoom) {
+        if (caps.zoom) {
             zoomSlider.disabled = false;
             zoomSlider.min = caps.zoom.min;
             zoomSlider.max = caps.zoom.max;
             zoomSlider.step = caps.zoom.step;
+            
             zoomSlider.oninput = function() {
+                zoomVal.innerText = parseFloat(this.value).toFixed(1) + 'x';
                 videoTrack.applyConstraints({advanced: [{zoom: this.value}]});
-                document.getElementById('zoomVal').innerText = parseFloat(this.value).toFixed(1);
-            }
+            };
         } else {
             zoomSlider.disabled = true;
+            zoomVal.innerText = "N/A";
         }
     }
 
-    // 4. IR 模式切換 (CSS 濾鏡模擬)
-    irCheck.onchange = function() {
-        if(this.checked) {
-            video.classList.add('ir-mode');
-        } else {
-            video.classList.remove('ir-mode');
-        }
-    }
-
-    // 5. 拍照 (會將 CSS 濾鏡效果「燒錄」進圖片)
+    // 4. 拍照與處理 (核心邏輯)
     shutterBtn.onclick = async () => {
-        const w = video.videoWidth;
-        const h = video.videoHeight;
-        const canvas = document.getElementById('photoCanvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
+        // UI 回饋
+        shutterBtn.style.transform = "scale(0.9)";
+        setTimeout(() => shutterBtn.style.transform = "scale(1)", 100);
 
-        // 如果開啟 IR 模式，使用 Canvas 濾鏡處理
-        if(irCheck.checked) {
-            ctx.filter = 'grayscale(100%) contrast(200%) brightness(150%)';
+        let bitmap = null;
+        
+        try {
+            // 獲取影像
+            if (imageCapture) {
+                try {
+                    bitmap = await imageCapture.grabFrame();
+                } catch(e) { console.log("grabFrame failed"); }
+            }
+            
+            const canvas = document.getElementById('photoCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            let w, h;
+
+            if (bitmap) {
+                w = bitmap.width;
+                h = bitmap.height;
+                canvas.width = w;
+                canvas.height = h;
+                ctx.drawImage(bitmap, 0, 0);
+            } else {
+                w = video.videoWidth;
+                h = video.videoHeight;
+                canvas.width = w;
+                canvas.height = h;
+                ctx.drawImage(video, 0, 0);
+            }
+
+            // --- 智慧增強處理 (Smart Enhance) ---
+            if (enhanceCheck.checked) {
+                resDisplay.innerText = "處理中: 智慧銳化...";
+                
+                // 1. 應用 SVG 濾鏡到 Context (這比手寫迴圈快很多)
+                // 注意：某些瀏覽器對 Canvas filter 支援度不一，這裡使用標準語法
+                ctx.filter = 'url(#smart-sharpen) contrast(1.1) saturate(1.1)';
+                
+                // 為了應用濾鏡，我們需要把原本的圖再畫一次
+                // 建立一個暫存的 canvas copy
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = w;
+                tempCanvas.height = h;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(canvas, 0, 0);
+                
+                // 清除主畫布並應用濾鏡重繪
+                ctx.clearRect(0, 0, w, h);
+                ctx.drawImage(tempCanvas, 0, 0);
+                
+                // 重置濾鏡以免影響下次
+                ctx.filter = 'none';
+            }
+
+            // --- 儲存照片 ---
+            const base64Image = canvas.toDataURL('image/jpeg', 0.95);
+            
+            const link = document.createElement('a');
+            link.download = `AI_CAM_${Date.now()}.jpg`;
+            link.href = base64Image;
+            link.click();
+            
+            resDisplay.innerText = `已儲存 (${w}x${h})`;
+
+            // --- Gemini AI 分析 (如果有的話) ---
+            const apiKey = apiKeyInput.value.trim();
+            if (apiKey) {
+                geminiPanel.style.display = 'block';
+                geminiContent.innerHTML = "🤖 Gemini 正在分析照片品質...";
+                analyzeImageWithGemini(base64Image, apiKey);
+            }
+
+        } catch (e) {
+            alert("拍照失敗: " + e.message);
         }
-        
-        ctx.drawImage(video, 0, 0, w, h);
-        
-        // 存檔
-        canvas.toBlob(blob => {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `IR_PHOTO_${Date.now()}.png`; // 仍存為 PNG
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }, 'image/png');
     };
+
+    // 5. Gemini API 呼叫 (功能：分析與建議)
+    async function analyzeImageWithGemini(base64Str, key) {
+        // 移除 Data URL 前綴
+        const cleanBase64 = base64Str.replace(/^data:image\/(png|jpeg);base64,/, "");
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+        
+        const payload = {
+            contents: [{
+                parts: [
+                    { text: "作為專業攝影師，請簡短分析這張照片的解析度、對焦與光線。如果有模糊或雜訊，請給予一個具體的改進建議 (例如：手持更穩、增加光線)。請用繁體中文回答，50字以內。" },
+                    { inline_data: { mime_type: "image/jpeg", data: cleanBase64 } }
+                ]
+            }]
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                geminiContent.innerHTML = `<span style="color:red">API 錯誤: ${data.error.message}</span>`;
+            } else {
+                const text = data.candidates[0].content.parts[0].text;
+                geminiContent.innerHTML = `<strong>🤖 分析報告:</strong><br>${text}`;
+            }
+        } catch (e) {
+            geminiContent.innerHTML = `<span style="color:red">連線失敗</span>`;
+        }
+    }
 
     init();
 
