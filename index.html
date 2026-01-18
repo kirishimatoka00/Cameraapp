@@ -2,299 +2,156 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Camera Debug Mode</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>相機診斷修復工具</title>
     <style>
-        body { 
-            margin: 0; 
-            background: #111; 
-            font-family: monospace; 
-            color: white;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-
-        .video-wrapper {
-            flex-grow: 1;
-            position: relative;
-            background: #000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            overflow: hidden;
-        }
-
-        video { 
-            width: 100%; 
-            height: 100%; 
-            object-fit: cover; 
-            background: #222;
-        }
-
-        .controls {
-            padding: 20px;
-            background: #222;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            z-index: 10;
-        }
-
-        button {
-            padding: 15px;
-            font-size: 16px;
-            border: none;
-            border-radius: 8px;
-            background: #007bff;
-            color: white;
-            cursor: pointer;
-        }
-        button:active { opacity: 0.8; }
-        button.shoot { background: #dc3545; font-weight: bold; }
-
-        /* 除錯訊息面板 */
-        #debug-log {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.7);
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            max-height: 150px;
-            overflow-y: auto;
-            pointer-events: none;
-            white-space: pre-wrap;
-            z-index: 20;
-            border: 1px solid #444;
-        }
-
-        .error { color: #ff6b6b; }
-        .success { color: #51cf66; }
-        .warn { color: #fcc419; }
-
-        input[type=range] { width: 100%; }
+        body { font-family: "微軟正黑體", sans-serif; background: #222; color: #fff; padding: 20px; }
+        .box { background: #333; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #444; }
+        h2 { margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 10px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; margin-right: 10px; margin-bottom: 10px;}
+        .btn-safe { background: #28a745; color: white; }
+        .btn-hd { background: #007bff; color: white; }
+        .btn-stop { background: #dc3545; color: white; }
+        
+        #log { background: #000; color: #0f0; font-family: monospace; padding: 10px; height: 150px; overflow-y: scroll; border: 1px solid #555; }
+        video { width: 100%; max-width: 500px; background: #000; display: block; margin-top: 10px; border: 2px solid #555; }
+        
+        .alert { background: #ff4444; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; display: none; font-weight: bold;}
+        .success { color: #4caf50; }
+        .error { color: #ff5252; }
     </style>
 </head>
 <body>
 
-    <div class="video-wrapper">
-        <video id="videoPreview" autoplay playsinline muted></video>
-        <div id="debug-log">準備就緒...<br>若畫面全黑，請按下方「重啟相機」</div>
+    <!-- 嚴重錯誤警告區 -->
+    <div id="file-protocol-alert" class="alert">
+        ⚠️ 偵測到嚴重環境錯誤！<br><br>
+        您目前正在使用 <code>file://</code> 模式開啟檔案。<br>
+        瀏覽器基於安全理由，<strong>禁止</strong>此模式使用相機。<br><br>
+        <strong>解決方法：</strong><br>
+        1. 電腦版：請使用 VS Code 安裝 "Live Server" 插件開啟。<br>
+        2. 手機版：請勿直接點擊 HTML 檔案，您必須將此檔案上傳到網站空間 (如 GitHub Pages) 才能使用。
     </div>
 
-    <div class="controls">
-        <div style="display:flex; justify-content:space-between;">
-            <span>變焦: <span id="zoomVal">1.0</span>x</span>
-        </div>
-        <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" disabled>
-        
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-            <button onclick="startCamera()">🔄 重啟相機</button>
-            <button class="shoot" id="shutterBtn">📸 拍照</button>
-        </div>
+    <div class="box">
+        <h2>1. 環境診斷</h2>
+        <div id="env-status">檢測中...</div>
     </div>
-    
-    <canvas id="photoCanvas" style="display:none;"></canvas>
+
+    <div class="box">
+        <h2>2. 相機操作</h2>
+        <div style="margin-bottom: 10px;">
+            如果畫面全黑，請依序嘗試按鈕：
+        </div>
+        <button class="btn-safe" onclick="startCamera('safe')">🟢 啟動 (安全模式)</button>
+        <button class="btn-hd" onclick="startCamera('hd')">🔵 啟動 (高清/後鏡頭)</button>
+        <button class="btn-stop" onclick="stopCamera()">🛑 停止相機</button>
+        
+        <video id="preview" autoplay playsinline muted></video>
+        <div id="resolution-display">解析度: 未啟動</div>
+    </div>
+
+    <div class="box">
+        <h2>3. 執行紀錄</h2>
+        <div id="log">系統準備就緒...</div>
+    </div>
 
 <script>
-    const video = document.getElementById('videoPreview');
-    const logDiv = document.getElementById('debug-log');
-    const zoomSlider = document.getElementById('zoomSlider');
-    const zoomVal = document.getElementById('zoomVal');
-    const shutterBtn = document.getElementById('shutterBtn');
-    
-    let videoTrack;
-    let imageCapture;
+    const logBox = document.getElementById('log');
+    const video = document.getElementById('preview');
+    const resDisplay = document.getElementById('resolution-display');
+    let currentStream = null;
 
-    function log(msg, type='') {
-        const span = document.createElement('div');
-        span.textContent = `> ${msg}`;
-        if(type) span.className = type;
-        logDiv.appendChild(span);
-        logDiv.scrollTop = logDiv.scrollHeight;
-        console.log(msg);
+    function log(msg, type = '') {
+        const time = new Date().toLocaleTimeString();
+        const colorClass = type === 'error' ? 'error' : (type === 'success' ? 'success' : '');
+        logBox.innerHTML += `<div class="${colorClass}">[${time}] ${msg}</div>`;
+        logBox.scrollTop = logBox.scrollHeight;
     }
 
-    async function startCamera() {
-        log("開始初始化相機...", 'warn');
+    // 1. 環境自我檢測
+    window.onload = function() {
+        const protocol = window.location.protocol;
+        const isSecure = window.isSecureContext;
         
-        // 1. 檢查是否支援 API
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            log("錯誤：瀏覽器不支援 getUserMedia API。", 'error');
-            log("提示：請使用 Chrome/Safari，並確認網址為 https 或 localhost", 'warn');
-            return;
+        let statusHtml = `網址開頭: <b>${protocol}</b><br>`;
+        statusHtml += `安全環境 (Secure Context): <b>${isSecure ? '是 (PASS)' : '否 (FAIL)'}</b><br>`;
+        
+        if (protocol === 'file:') {
+            document.getElementById('file-protocol-alert').style.display = 'block';
+            statusHtml += `<span class="error">❌ 錯誤：請勿直接開啟檔案，請架設 Server。</span>`;
+        } else if (!isSecure && protocol !== 'http:' && window.location.hostname !== 'localhost') {
+            statusHtml += `<span class="error">❌ 錯誤：相機需要 HTTPS 連線。</span>`;
+        } else {
+            statusHtml += `<span class="success">✅ 環境檢查通過，應該可以使用相機。</span>`;
         }
+        
+        document.getElementById('env-status').innerHTML = statusHtml;
+    };
 
-        // 2. 設定參數 (先放寬標準，求有畫面)
-        const constraints = {
-            audio: false,
-            video: {
-                // 嘗試後鏡頭，但允許失敗回退
-                facingMode: "environment", 
+    // 2. 啟動相機邏輯
+    async function startCamera(mode) {
+        stopCamera(); // 先關閉舊的
+        log(`正在嘗試啟動：${mode === 'safe' ? '安全模式' : '高清模式'}...`);
+
+        const constraints = { audio: false };
+
+        if (mode === 'safe') {
+            // 安全模式：最寬鬆的條件，只求有畫面
+            constraints.video = true;
+        } else {
+            // 高清模式：嘗試後鏡頭 + 4K
+            constraints.video = {
+                facingMode: "environment",
                 width: { ideal: 4096 },
                 height: { ideal: 4096 }
-            }
-        };
+            };
+        }
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            log("取得串流成功！", 'success');
-            
+            currentStream = stream;
             video.srcObject = stream;
             
-            // 確保 video 播放
+            // 等待畫面載入以讀取解析度
             video.onloadedmetadata = () => {
-                video.play().then(() => log("畫面播放中", 'success'))
-                            .catch(e => log("播放失敗(需手動觸發): " + e, 'error'));
+                const w = video.videoWidth;
+                const h = video.videoHeight;
+                resDisplay.innerText = `解析度: ${w} x ${h}`;
+                log(`✅ 成功啟動！實際解析度: ${w}x${h}`, 'success');
+                
+                // 檢查是否真的拿到後鏡頭
+                const track = stream.getVideoTracks()[0];
+                const settings = track.getSettings();
+                if (settings.facingMode) {
+                    log(`目前鏡頭: ${settings.facingMode}`);
+                }
             };
-
-            videoTrack = stream.getVideoTracks()[0];
-            const settings = videoTrack.getSettings();
-            log(`實際解析度: ${settings.width}x${settings.height}`);
-            
-            // 初始化變焦
-            setupZoom();
-
-            // 初始化 ImageCapture
-            if (window.ImageCapture) {
-                imageCapture = new ImageCapture(videoTrack);
-            }
 
         } catch (err) {
-            log("相機啟動失敗: " + err.name, 'error');
-            log("詳細錯誤: " + err.message);
+            log(`❌ 啟動失敗: ${err.name}`, 'error');
+            log(`原因: ${err.message}`, 'error');
             
             if (err.name === 'NotAllowedError') {
-                log("請允許相機權限！通常在網址列左側有個鎖頭或設定圖示。", 'error');
-            } else if (err.name === 'NotFoundError') {
-                log("找不到相機裝置。", 'error');
+                alert("您按了「拒絕」或瀏覽器權限被封鎖。\n請重整網頁並允許相機權限。");
+            } else if (err.name === 'OverconstrainedError' && mode === 'hd') {
+                log("⚠️ 硬體不支援高清設定，請改用「安全模式」。", 'error');
+                alert("手機不支援此解析度，請改按「安全模式」。");
             } else {
-                // 嘗試最基本的相機請求 (不指定解析度與鏡頭方向)
-                log("嘗試使用相容模式重試...", 'warn');
-                try {
-                    const basicStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    video.srcObject = basicStream;
-                    videoTrack = basicStream.getVideoTracks()[0];
-                    log("相容模式啟動成功", 'success');
-                } catch (retryErr) {
-                    log("相容模式也失敗: " + retryErr.message, 'error');
-                }
+                alert("相機發生未知錯誤，請看下方紀錄。");
             }
         }
     }
 
-    function setupZoom() {
-        const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        
-        if (capabilities.zoom) {
-            zoomSlider.min = capabilities.zoom.min;
-            zoomSlider.max = capabilities.zoom.max;
-            zoomSlider.step = capabilities.zoom.step;
-            zoomSlider.disabled = false;
-            log(`支援變焦: ${capabilities.zoom.min}x - ${capabilities.zoom.max}x`, 'success');
-            
-            zoomSlider.oninput = function() {
-                const z = parseFloat(this.value);
-                zoomVal.innerText = z.toFixed(1);
-                videoTrack.applyConstraints({ advanced: [{ zoom: z }] });
-            };
-        } else {
-            log("此裝置/瀏覽器不支援硬體變焦 API", 'warn');
+    function stopCamera() {
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+            resDisplay.innerText = "解析度: 已停止";
+            log("相機已停止");
         }
     }
-
-    // 拍照
-    shutterBtn.onclick = async () => {
-        if (!videoTrack) {
-            log("相機未啟動，無法拍照", 'error');
-            return;
-        }
-        
-        log("拍照中...");
-        let blob = null;
-        
-        // 嘗試 ImageCapture (高畫質)
-        if (imageCapture) {
-            try {
-                blob = await imageCapture.takePhoto();
-                log("使用 ImageCapture 拍攝成功", 'success');
-            } catch (e) {
-                log("ImageCapture 失敗，切換截圖模式", 'warn');
-            }
-        }
-
-        // 備用：截圖模式
-        if (!blob) {
-            const canvas = document.getElementById('photoCanvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-            log(`使用截圖模式: ${canvas.width}x${canvas.height}`);
-        }
-
-        // 下載
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `Photo_${Date.now()}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        log("檔案已下載", 'success');
-    };
-
-    // 自動啟動
-    window.onload = startCamera;
-
 </script>
 </body>
 </html>
 
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(bitmap, 0, 0);
-                    
-                    finalBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                } catch (e) {
-                    console.log("ImageCapture 失敗，切換至備用方案");
-                }
-            }
-
-            // 策略 B: 如果策略 A 失敗 (例如在 iOS Safari)，直接抓取 Video Frame
-            if (!finalBlob) {
-                width = video.videoWidth;
-                height = video.videoHeight;
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, width, height);
-                finalBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-            }
-
-            // 執行下載
-            const url = URL.createObjectURL(finalBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `RAW_LIKE_${Date.now()}_${width}x${height}.png`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            resInfo.innerText = `已儲存: ${width} x ${height} (PNG無損)`;
-
-        } catch (error) {
-            console.error(error);
-            alert("拍攝失敗: " + error.message);
-        }
-    };
-
-    // 啟動程式
-    initCamera();
-
-</script>
-</body>
-</html>
