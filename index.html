@@ -3,155 +3,235 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Pro Camera (20x Burst)</title>
+    <title>AI HDR Pro (Responsive)</title>
     <style>
-        body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        /* --- 核心佈局系統 --- */
+        body { 
+            margin: 0; 
+            background: #000; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            color: white; 
+            /* 使用 dvh 確保在手機瀏覽器上能完美滿版 */
+            height: 100dvh; 
+            width: 100vw;
+            overflow: hidden; 
+            display: flex; 
+            flex-direction: column; 
+        }
         
-        /* 專業級頂部欄 */
+        /* 1. 頂部工具列 (固定高度) */
         .top-bar { 
-            background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 100%);
-            padding: 12px 20px; z-index: 20; display: flex; justify-content: space-between; align-items: center;
-            backdrop-filter: blur(5px);
+            background: rgba(20,20,30,0.95); 
+            padding: 8px 15px; 
+            z-index: 20;
+            display: flex; 
+            gap: 10px; 
+            align-items: center;
+            border-bottom: 1px solid #333;
+            flex-shrink: 0; /* 禁止被壓縮 */
+            padding-top: max(8px, env(safe-area-inset-top)); /* 避開瀏海 */
         }
         
-        .cam-select {
-            background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3);
-            padding: 5px 10px; border-radius: 20px; font-size: 13px; max-width: 140px;
+        select { 
+            flex-grow: 1; 
+            background: #222; color: white; border: 1px solid #555; 
+            padding: 8px; border-radius: 8px; font-size: 13px; outline: none;
+            max-width: 100%;
         }
 
-        /* 視窗與 HUD */
-        .viewport { flex-grow: 1; position: relative; background: #000; display:flex; justify-content:center; align-items:center; }
-        video { width: 100%; height: 100%; object-fit: contain; }
+        .status-badge {
+            background: #ffcc00; color: #000; padding: 4px 8px; border-radius: 4px; 
+            font-size: 11px; font-weight: bold; white-space: nowrap;
+        }
 
-        /* 運算狀態 HUD (置中顯示) */
-        #processing-hud {
+        /* 2. 中間預覽區 (自動填滿剩餘空間) */
+        .viewport { 
+            flex-grow: 1; /* 關鍵：佔據所有剩餘空間 */
+            position: relative; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            overflow: hidden;
+            width: 100%;
+        }
+        
+        video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; /* 確保畫面完整顯示 */
+        }
+
+        /* HUD (狀態顯示) */
+        #hud {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            display: none; flex-direction: column; align-items: center; gap: 15px; z-index: 50;
-            width: 200px;
+            display: none; flex-direction: column; align-items: center; gap: 10px; z-index: 50;
+            pointer-events: none;
         }
-        
-        /* 進度圈動畫 */
-        .progress-ring {
-            width: 60px; height: 60px; border-radius: 50%;
-            border: 5px solid rgba(255,255,255,0.1);
-            border-top-color: #00ff88;
-            animation: spin 1s linear infinite;
+        .spinner {
+            width: 40px; height: 40px; border-radius: 50%;
+            border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #ffcc00;
+            animation: spin 1s infinite linear;
         }
-        
-        .hud-status {
-            background: rgba(0,0,0,0.8); color: #00ff88; padding: 8px 16px; 
-            border-radius: 8px; font-family: monospace; font-size: 14px;
-            text-align: center; border: 1px solid #00ff88;
-            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+        .hud-text {
+            background: rgba(0,0,0,0.8); color: #fff; padding: 6px 12px; border-radius: 15px;
+            font-size: 13px; border: 1px solid #555; text-align: center;
+            white-space: nowrap;
         }
-
         @keyframes spin { 100% { transform: rotate(360deg); } }
 
-        /* 底部控制區 */
+        /* 3. 底部控制區 (高度適應內容) */
         .controls { 
-            background: rgba(10,10,10,0.95); padding: 20px; 
-            display: flex; flex-direction: column; gap: 20px; align-items: center; 
-            padding-bottom: max(30px, env(safe-area-inset-bottom)); z-index: 20;
+            background: #111; 
+            padding: 10px 15px 15px 15px; 
             border-top: 1px solid #333;
+            display: flex; 
+            flex-direction: column; 
+            gap: 12px; /* 縮小間距 */
+            align-items: center; 
+            z-index: 20;
+            flex-shrink: 0; /* 禁止被壓縮 */
+            padding-bottom: max(20px, env(safe-area-inset-bottom)); /* 避開底部橫條 */
         }
 
-        /* 模式切換 */
-        .mode-bar {
-            display: flex; background: #222; border-radius: 30px; padding: 4px; border: 1px solid #444;
+        /* 曝光視覺化條 */
+        .bracketing-viz {
+            display: flex; gap: 4px; align-items: flex-end; height: 8px; width: 80px; justify-content: center;
+            margin-bottom: -5px; /* 緊湊佈局 */
         }
-        .mode-item {
-            padding: 8px 18px; border-radius: 25px; border: none; background: transparent; 
-            color: #888; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.3s;
-        }
-        .mode-item.active { background: #fff; color: #000; box-shadow: 0 2px 10px rgba(255,255,255,0.3); }
-        .mode-item[data-mode="pro-20x"].active { background: linear-gradient(135deg, #00ff88, #00b8ff); color: #000; }
+        .bar { width: 18px; background: #444; border-radius: 2px; transition: 0.2s; }
+        .bar.active { background: #ffcc00; box-shadow: 0 0 8px #ffcc00; }
 
-        /* 變焦條 */
-        .zoom-wrap { width: 90%; display: flex; align-items: center; gap: 12px; color: #ffd700; font-weight: bold; font-size: 14px; }
-        input[type=range] { flex-grow: 1; accent-color: #ffd700; height: 4px; }
+        /* 滑桿區域 (緊湊設計) */
+        .sliders-container {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
 
-        /* 專業快門鍵 */
-        .shutter-outer {
-            width: 78px; height: 78px; border-radius: 50%;
-            border: 3px solid rgba(255,255,255,0.3);
-            display: flex; justify-content: center; align-items: center;
-            cursor: pointer; transition: 0.2s; position: relative;
+        .slider-row { 
+            width: 100%; 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            font-size: 12px; 
+            font-weight: bold; 
+            height: 24px;
         }
-        .shutter-inner {
-            width: 64px; height: 64px; border-radius: 50%;
-            background: white; transition: 0.3s;
-            box-shadow: 0 0 15px rgba(255,255,255,0.2);
-        }
-        .shutter-outer:active { transform: scale(0.95); }
         
-        /* 20x 模式下的快門特效 */
-        .shutter-outer.pro-mode { border-color: rgba(0, 255, 136, 0.5); }
-        .shutter-outer.pro-mode .shutter-inner { 
-            background: linear-gradient(135deg, #00ff88, #00b8ff);
-            box-shadow: 0 0 20px rgba(0, 255, 136, 0.6);
+        .slider-label-left { width: 30px; color: #aaa; }
+        .slider-label-right { width: 35px; text-align: right; font-family: monospace; }
+        
+        /* 不同的顏色區分功能 */
+        .zoom-text { color: #ffd700; }
+        .ev-text { color: #00d2ff; }
+        
+        input[type=range] { 
+            flex-grow: 1; height: 4px; border-radius: 2px; cursor: pointer;
+            -webkit-appearance: none; background: #444;
         }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range].zoom-range { accent-color: #ffd700; }
+        input[type=range].ev-range { accent-color: #00d2ff; }
+
+        /* 快門按鈕 */
+        .shutter-btn {
+            width: 64px; height: 64px; /* 稍微縮小以適應小螢幕 */
+            border-radius: 50%;
+            border: 4px solid rgba(255,255,255,0.3);
+            background: radial-gradient(circle, #fff 30%, #ffcc00 100%);
+            cursor: pointer; position: relative; transition: 0.1s;
+            box-shadow: 0 0 15px rgba(255, 200, 0, 0.2);
+            flex-shrink: 0;
+        }
+        .shutter-btn:active { transform: scale(0.92); }
 
         canvas { display: none; }
     </style>
 </head>
 <body>
 
-    <!-- 運算用 SVG 濾鏡 (智慧銳化) -->
+    <!-- 濾鏡 SVG -->
     <svg style="width:0;height:0;position:absolute;">
         <defs><filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter></defs>
     </svg>
 
+    <!-- 頂部 -->
     <div class="top-bar">
-        <select id="cameraSelect" class="cam-select"><option>相機載入中...</option></select>
-        <div id="resInfo" style="font-size:12px; color:#aaa; font-family:monospace;">Waiting</div>
+        <select id="cameraSelect"><option>Loading...</option></select>
+        <div id="resInfo" class="status-badge">Init...</div>
     </div>
 
+    <!-- 中間 (自動伸縮) -->
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
         
-        <!-- 處理狀態 HUD -->
-        <div id="processing-hud">
-            <div class="progress-ring"></div>
-            <div id="hud-text" class="hud-status">準備連拍...</div>
-            <div id="hud-detail" style="font-size:10px; color:#aaa;">穩定度分析中</div>
+        <div id="hud">
+            <div class="spinner"></div>
+            <div class="hud-text">
+                <div id="hud-status">HDR 初始化...</div>
+                <div id="hud-ev" style="color:#ffcc00; font-weight:bold;">EV 0</div>
+            </div>
         </div>
     </div>
 
+    <!-- 底部 (固定不跑版) -->
     <div class="controls">
-        <div class="mode-bar">
-            <button class="mode-item" data-mode="normal" onclick="setMode('normal')">一般</button>
-            <button class="mode-item active" data-mode="pro-20x" onclick="setMode('pro-20x')">AI 極致 (20x)</button>
+        <div class="bracketing-viz">
+            <div class="bar" style="height: 60%" id="bar-low"></div>
+            <div class="bar" style="height: 100%" id="bar-mid"></div>
+            <div class="bar" style="height: 60%" id="bar-high"></div>
         </div>
 
-        <div class="zoom-wrap">
-            <span>1x</span>
-            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
-            <span id="zoomVal" style="width:30px; text-align:right;">1.0</span>
+        <div class="sliders-container">
+            <!-- EV 滑桿 -->
+            <div class="slider-row">
+                <span class="slider-label-left ev-text">EV±</span>
+                <input type="range" class="ev-range" id="evSlider" min="0.5" max="3.0" step="0.5" value="2.0">
+                <span id="evDisplay" class="slider-label-right ev-text">2.0</span>
+            </div>
+
+            <!-- Zoom 滑桿 -->
+            <div class="slider-row">
+                <span class="slider-label-left zoom-text">Mag</span>
+                <input type="range" class="zoom-range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+                <span id="zoomVal" class="slider-label-right zoom-text">1.0</span>
+            </div>
         </div>
 
-        <div class="shutter-outer pro-mode" id="shutterBtn" onclick="capture()">
-            <div class="shutter-inner"></div>
-        </div>
+        <div class="shutter-btn" onclick="captureHDR()"></div>
     </div>
 
-    <!-- 運算畫布 -->
-    <canvas id="mainCanvas"></canvas>
-    <!-- 縮圖分析專用畫布 (加速差異比對) -->
+    <!-- 處理用畫布 -->
+    <canvas id="canvasLow"></canvas>
+    <canvas id="canvasMid"></canvas>
+    <canvas id="canvasHigh"></canvas>
     <canvas id="thumbCanvas" width="64" height="64"></canvas>
 
 <script>
     const video = document.getElementById('videoPreview');
     const cameraSelect = document.getElementById('cameraSelect');
     const zoomSlider = document.getElementById('zoomSlider');
-    const hud = document.getElementById('processing-hud');
-    const hudText = document.getElementById('hud-text');
-    const hudDetail = document.getElementById('hud-detail');
-    const shutterBtn = document.getElementById('shutterBtn');
+    const evSlider = document.getElementById('evSlider');
+    const resInfo = document.getElementById('resInfo');
+    const hud = document.getElementById('hud');
+    const hudStatus = document.getElementById('hud-status');
+    const hudEv = document.getElementById('hud-ev');
+    
+    // 視覺化條
+    const barLow = document.getElementById('bar-low');
+    const barMid = document.getElementById('bar-mid');
+    const barHigh = document.getElementById('bar-high');
 
     let currentStream, videoTrack, imageCapture;
-    let currentMode = 'pro-20x';
-    
-    // 初始化相機
+    let hardwareExposure = false;
+    let maxExposureRange = 2; // 預設最大 EV 範圍
+
+    // 1. 初始化並列出鏡頭
     async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -163,12 +243,11 @@
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
+                opt.text = d.label || `鏡頭 ${i}`;
                 cameraSelect.appendChild(opt);
             });
 
             if(cams.length > 0) {
-                // 預設選最後一個 (通常是主攝)
                 const def = cams[cams.length - 1];
                 cameraSelect.value = def.deviceId;
                 startCamera(def.deviceId);
@@ -177,18 +256,21 @@
         } catch(e) { alert("請允許相機權限"); }
     }
 
+    // 2. 啟動特定鏡頭
     async function startCamera(id) {
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
         zoomSlider.disabled = true;
+
         try {
-            // 嘗試高畫質
-            await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 } } });
+            await launchStream({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 } } });
         } catch(e) {
-            try { await launch({ video: { deviceId: { exact: id } } }); } catch(err) {}
+            try { 
+                await launchStream({ video: { deviceId: { exact: id } } });
+            } catch(e2) { alert("此鏡頭無法啟動"); }
         }
     }
 
-    async function launch(constraints) {
+    async function launchStream(constraints) {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
         video.srcObject = stream;
@@ -196,12 +278,13 @@
         if(window.ImageCapture) try{imageCapture = new ImageCapture(videoTrack)}catch(e){}
 
         video.onloadedmetadata = () => {
-            document.getElementById('resInfo').innerText = `${video.videoWidth}x${video.videoHeight}px`;
             const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+            
+            // 設定變焦
             if(caps.zoom) {
                 zoomSlider.disabled = false;
                 zoomSlider.min = caps.zoom.min;
-                zoomSlider.max = Math.min(caps.zoom.max, 8); // 8倍變焦
+                zoomSlider.max = Math.min(caps.zoom.max, 8);
                 zoomSlider.step = 0.1;
                 zoomSlider.value = 1;
                 zoomSlider.oninput = function() {
@@ -209,177 +292,164 @@
                     videoTrack.applyConstraints({advanced:[{zoom:this.value}]});
                 }
             }
+
+            // 檢查並設定硬體 EV
+            if(caps.exposureCompensation) {
+                hardwareExposure = true;
+                resInfo.innerText = "HDR Pro";
+                resInfo.style.background = "#ffcc00";
+                
+                const maxEV = caps.exposureCompensation.max;
+                const minEV = caps.exposureCompensation.min;
+                maxExposureRange = Math.min(Math.abs(maxEV), Math.abs(minEV));
+                evSlider.max = maxExposureRange;
+                evSlider.value = Math.min(2.0, maxExposureRange);
+                document.getElementById('evDisplay').innerText = parseFloat(evSlider.value).toFixed(1);
+            } else {
+                hardwareExposure = false;
+                resInfo.innerText = "HDR Sim";
+                resInfo.style.background = "#666";
+                evSlider.disabled = true; 
+            }
         };
     }
-
-    // 模式切換 UI
-    window.setMode = function(mode) {
-        currentMode = mode;
-        document.querySelectorAll('.mode-item').forEach(b => b.classList.remove('active'));
-        document.querySelector(`.mode-item[data-mode="${mode}"]`).classList.add('active');
-        
-        if(mode === 'pro-20x') shutterBtn.classList.add('pro-mode');
-        else shutterBtn.classList.remove('pro-mode');
+    
+    evSlider.oninput = function() {
+        document.getElementById('evDisplay').innerText = parseFloat(this.value).toFixed(1);
     }
 
-    // 拍攝總控
-    window.capture = async function() {
-        // 快門動畫
-        shutterBtn.style.transform = 'scale(0.8)';
-        setTimeout(() => shutterBtn.style.transform = 'scale(1)', 100);
-
-        if(currentMode === 'normal') {
-            const bmp = await grabFrame();
-            save(bmp, 'Normal');
-        } else {
-            await processPro20x();
-        }
-    }
-
-    async function grabFrame() {
-        if(imageCapture) {
-            try { return await imageCapture.grabFrame(); } catch(e){}
-        }
-        const cvs = document.createElement('canvas');
-        cvs.width = video.videoWidth; cvs.height = video.videoHeight;
-        cvs.getContext('2d').drawImage(video,0,0);
-        return cvs;
-    }
-
-    // ★★★ 核心：20連拍極致堆疊算法 ★★★
-    async function processPro20x() {
-        hud.style.display = 'flex';
-        hudText.innerText = "高速連拍中...";
-        hudDetail.innerText = "請保持手部穩定 (0/20)";
-        
-        const frames = [];
-        const TARGET_FRAMES = 20;
-        
+    async function setEV(value) {
+        if (!hardwareExposure) return;
         try {
-            // 1. 高速採樣階段
-            for(let i=0; i<TARGET_FRAMES; i++) {
-                try {
-                    const frame = await grabFrame();
-                    frames.push(frame);
-                    hudDetail.innerText = `採樣中 (${i+1}/${TARGET_FRAMES})`;
-                    // 極微小延遲，避免瀏覽器卡死，同時採樣時間差異
-                    await new Promise(r => setTimeout(r, 10)); 
-                } catch(err) {
-                    console.warn("Frame drop");
-                }
-            }
+            let safeValue = Math.max(-maxExposureRange, Math.min(value, maxExposureRange));
+            await videoTrack.applyConstraints({ advanced: [{ exposureCompensation: safeValue }] });
+            await new Promise(r => setTimeout(r, 200)); 
+        } catch(e) {}
+    }
 
-            if(frames.length < 5) throw new Error("採樣不足");
+    // 3. HDR 拍攝流程
+    async function captureHDR() {
+        hud.style.display = 'flex';
+        const framesLow = [], framesMid = [], framesHigh = [];
+        const range = parseFloat(evSlider.value);
 
-            hudText.innerText = "AI 對齊分析...";
-            hudDetail.innerText = "正在剔除模糊幀";
+        try {
+            // A. 抓高光
+            updateHUD("鎖定高光", `EV -${range}`, "low");
+            await setEV(-range);
+            for(let i=0; i<3; i++) framesLow.push(await grab());
 
-            // 2. 基準幀選擇 (取中間，避免開頭和結尾的手震)
-            const baseIndex = Math.floor(frames.length / 2);
-            const baseFrame = frames[baseIndex];
+            // B. 抓陰影
+            updateHUD("捕捉暗部", `EV +${range}`, "high");
+            await setEV(range);
+            for(let i=0; i<3; i++) framesHigh.push(await grab());
+
+            // C. 抓基準
+            updateHUD("建立基準", "EV 0.0", "mid");
+            await setEV(0);
+            for(let i=0; i<6; i++) framesMid.push(await grab());
+
+            // D. 運算融合
+            updateHUD("AI 融合運算", "Processing", "all");
             
-            const canvas = document.getElementById('mainCanvas');
-            canvas.width = baseFrame.width;
-            canvas.height = baseFrame.height;
-            const ctx = canvas.getContext('2d');
-            
-            // 繪製基底
-            ctx.drawImage(baseFrame, 0, 0);
+            const cvsLow = await stackImages(framesLow, "canvasLow");
+            const cvsHigh = await stackImages(framesHigh, "canvasHigh");
+            const cvsMid = await stackImages(framesMid, "canvasMid");
 
-            // 3. 嚴格篩選與堆疊
-            let stackedCount = 1;
-            let rejectedCount = 0;
+            const ctx = cvsMid.getContext('2d');
             
-            // 閾值設定：20張因為樣本多，我們可以設得更嚴格 (Strict Mode)
-            // 差異值 > 25 就視為位移 (之前是 35)
-            const STRICT_THRESHOLD = 25; 
+            // Screen 提亮暗部
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = 0.5;
+            ctx.drawImage(cvsHigh, 0, 0);
 
-            for(let i=0; i<frames.length; i++) {
-                if(i === baseIndex) continue;
+            // Soft-light 壓制高光
+            ctx.globalCompositeOperation = 'soft-light';
+            ctx.globalAlpha = 0.6;
+            ctx.drawImage(cvsLow, 0, 0);
 
-                const diff = calculateDiff(baseFrame, frames[i]);
-                
-                // 篩選邏輯
-                if(diff < STRICT_THRESHOLD) {
-                    // 演算法：加權平均 (Weighted Average)
-                    // 公式：NewPixel = CurrentPixel * (1 / (N+1)) + NewFrame * (1 - 1/(N+1)) ??? 
-                    // 簡化版 Canvas 全局透明度法： Alpha = 1 / (目前堆疊數 + 1)
-                    // 例如：第2張疊50%，第3張疊33%，第4張疊25%... 數學上等同於算術平均
-                    ctx.globalAlpha = 1 / (stackedCount + 1);
-                    ctx.drawImage(frames[i], 0, 0);
-                    ctx.globalAlpha = 1.0;
-                    stackedCount++;
-                } else {
-                    rejectedCount++;
-                }
-                
-                // 更新進度條給使用者看
-                if(i % 5 === 0) {
-                    hudDetail.innerText = `堆疊 ${stackedCount} / 剔除 ${rejectedCount}`;
-                    await new Promise(r => setTimeout(r, 0)); // 讓 UI 刷新
-                }
-            }
-
-            // 4. 最終優化 (智慧銳化 + 對比微調)
-            hudText.innerText = `最終合成 (${stackedCount}幀)`;
-            hudDetail.innerText = "應用智慧銳化濾鏡...";
+            // 恢復與銳化
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1.0;
             
-            // 複製當前結果
-            const tempCvs = document.createElement('canvas');
-            tempCvs.width = canvas.width; tempCvs.height = canvas.height;
-            tempCvs.getContext('2d').drawImage(canvas, 0, 0);
+            const temp = document.createElement('canvas');
+            temp.width = cvsMid.width; temp.height = cvsMid.height;
+            temp.getContext('2d').drawImage(cvsMid, 0, 0);
             
-            // 清空畫布，應用濾鏡重繪
-            // filter: smart-sharpen (銳化) + contrast (增加立體感) + saturate (補償疊圖造成的色彩平淡)
-            ctx.filter = 'url(#smart-sharpen) contrast(1.08) saturate(1.1)';
-            ctx.clearRect(0,0,canvas.width,canvas.height);
-            ctx.drawImage(tempCvs, 0, 0);
+            ctx.filter = 'url(#smart-sharpen) contrast(1.1) saturate(1.15)';
+            ctx.clearRect(0,0,cvsMid.width,cvsMid.height);
+            ctx.drawImage(temp, 0, 0);
             ctx.filter = 'none';
 
-            // 存檔
-            save(canvas, `AI_Pro_Stack${stackedCount}`);
+            save(cvsMid);
 
         } catch(e) {
             console.error(e);
-            alert("記憶體不足或運算錯誤，已切換回一般模式");
-            save(frames[0] || video, 'Fallback');
+            alert("拍攝失敗");
+            if(framesMid.length > 0) save(framesMid[0]);
         } finally {
             hud.style.display = 'none';
+            setEV(0);
+            resetBars();
         }
     }
 
-    // 差異計算 (使用 64x64 縮圖加速)
-    function calculateDiff(img1, img2) {
-        const tCvs = document.getElementById('thumbCanvas');
-        const tCtx = tCvs.getContext('2d');
+    async function stackImages(frames, canvasId) {
+        const canvas = document.getElementById(canvasId);
+        canvas.width = frames[0].width; canvas.height = frames[0].height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(frames[0], 0, 0);
         
-        // 畫圖 1
+        let count = 1;
+        for(let i=1; i<frames.length; i++) {
+            const diff = getDiff(frames[0], frames[i]);
+            if(diff < 50) { 
+                ctx.globalAlpha = 1 / (count + 1);
+                ctx.drawImage(frames[i], 0, 0);
+                count++;
+                ctx.globalAlpha = 1.0;
+            }
+        }
+        return canvas;
+    }
+
+    async function grab() {
+        if(imageCapture) {
+            try { return await imageCapture.grabFrame(); } catch(e){}
+        }
+        const c = document.createElement('canvas');
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext('2d').drawImage(video,0,0);
+        return c;
+    }
+
+    function getDiff(img1, img2) {
+        const tCtx = document.getElementById('thumbCanvas').getContext('2d');
         tCtx.drawImage(img1, 0, 0, 64, 64);
         const d1 = tCtx.getImageData(0,0,64,64).data;
-        
-        // 畫圖 2
         tCtx.clearRect(0,0,64,64);
         tCtx.drawImage(img2, 0, 0, 64, 64);
         const d2 = tCtx.getImageData(0,0,64,64).data;
-        
         let diff = 0;
-        // 隨機抽樣比對 (每 8 個點比一次，犧牲極少準度換取極致速度)
-        for(let i=0; i<d1.length; i+=8) {
-            diff += Math.abs(d1[i] - d2[i]) + Math.abs(d1[i+1] - d2[i+1]) + Math.abs(d1[i+2] - d2[i+2]);
-        }
-        
-        // 正規化差異值
-        return diff / ( (64*64/2) * 3 );
+        for(let i=0; i<d1.length; i+=16) diff += Math.abs(d1[i] - d2[i]);
+        return diff / (64*64/4);
     }
 
-    function save(source, prefix) {
-        const canvas = document.getElementById('mainCanvas');
-        if(source !== canvas) {
-            canvas.width = source.width; canvas.height = source.height;
-            canvas.getContext('2d').drawImage(source, 0, 0);
-        }
+    function updateHUD(status, ev, bar) {
+        hudStatus.innerText = status;
+        hudEv.innerText = ev;
+        resetBars();
+        if(bar === 'all') { barLow.classList.add('active'); barMid.classList.add('active'); barHigh.classList.add('active'); }
+        else document.getElementById(`bar-${bar}`).classList.add('active');
+    }
+
+    function resetBars() {
+        document.querySelectorAll('.bar').forEach(b => b.classList.remove('active'));
+    }
+
+    function save(canvas) {
         const link = document.createElement('a');
-        link.download = `${prefix}_${Date.now()}.jpg`;
+        link.download = `HDR_Pro_${Date.now()}.jpg`;
         link.href = canvas.toDataURL('image/jpeg', 0.95);
         link.click();
     }
