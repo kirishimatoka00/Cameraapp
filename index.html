@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Computational Cam (OpenCV)</title>
-    <!-- 引入 OpenCV.js (電腦視覺庫) -->
+    <title>AI Ultimate (CV+Control)</title>
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
+        /* --- 頂部區域 --- */
         .top-bar { 
             background: rgba(20,20,25,0.95); padding: 8px 12px; z-index: 20;
             display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #333;
@@ -19,61 +19,104 @@
         
         select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 13px; flex-grow: 1; max-width: 120px; }
         
-        /* 引擎狀態燈 */
-        .engine-status {
-            font-size: 10px; color: #555; padding: 2px 6px; border: 1px solid #333; border-radius: 4px; display: flex; align-items: center; gap: 4px;
-        }
-        .engine-status.ready { color: #00ff88; border-color: #00ff88; }
-        .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        /* 燈光按鈕組 */
+        .light-group { display: flex; background: #222; border-radius: 8px; border: 1px solid #444; padding: 2px; }
+        .light-btn { padding: 4px 8px; font-size: 14px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #666; transition: 0.2s; }
+        .light-btn.active { background: #ffd700; color: #000; font-weight: bold; }
+        .light-btn:disabled { opacity: 0.3; }
 
-        .feature-toggle {
-            display: flex; align-items: center; gap: 4px; font-size: 11px; color: #aaa;
-            background: #222; padding: 4px 8px; border-radius: 12px; border: 1px solid #444; cursor: pointer;
+        /* 功能開關 */
+        .toggle-btn {
+            background: #222; border: 1px solid #444; color: #aaa; padding: 4px 8px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap; flex-grow: 1; justify-content: center;
         }
-        .feature-toggle input:checked + span { color: #00d2ff; font-weight: bold; text-shadow: 0 0 5px rgba(0, 210, 255, 0.5); }
+        .toggle-btn input { margin: 0; }
+        
+        /* 不同功能的啟用顏色 */
+        .t-hdr.active { border-color: #ffaa00; color: #ffaa00; font-weight: bold; }
+        .t-cv.active { border-color: #00d2ff; color: #00d2ff; font-weight: bold; }
+        .t-upscale.active { border-color: #d200ff; color: #d200ff; font-weight: bold; }
 
+        /* --- 視窗與對焦框 --- */
         .viewport { 
             flex-grow: 1; position: relative; background: #111; overflow: hidden;
             display: flex; justify-content: center; align-items: center; 
+            touch-action: none;
         }
-        video { width: 100%; height: 100%; object-fit: contain; }
+        video { width: 100%; height: 100%; object-fit: contain; transition: filter 0.05s linear; }
 
-        /* 處理進度 HUD */
-        #cv-hud {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
+        /* 點選對焦框動畫 */
+        #focus-reticle {
+            position: absolute; width: 60px; height: 60px;
+            border: 2px solid #fff; border-radius: 8px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+            display: none; pointer-events: none; z-index: 30;
+            transform: translate(-50%, -50%);
+        }
+        #focus-reticle.focusing { animation: focus-anim 0.5s ease-out forwards; }
+        @keyframes focus-anim {
+            0% { width: 80px; height: 80px; border-color: #fff; opacity: 1; }
+            50% { width: 60px; height: 60px; border-color: #ffd700; }
+            100% { width: 60px; height: 60px; border-color: #00ff00; opacity: 0; }
+        }
+
+        #status-pill {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px;
+            font-size: 11px; color: #00ff88; border: 1px solid rgba(0,255,136,0.3); pointer-events: none; z-index: 10;
+        }
+        .warn-mode { color: #ffd700 !important; border-color: #ffd700 !important; }
+
+        /* 遮罩與進度 */
+        #mask {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 50;
             display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
         }
-        .cv-spinner {
-            width: 50px; height: 50px; border-radius: 50%;
-            border: 4px solid #333; border-top: 4px solid #00ff88; border-right: 4px solid #00d2ff;
+        .spinner {
+            width: 40px; height: 40px; border-radius: 50%;
+            border: 3px solid #333; border-top: 3px solid #00d2ff;
             animation: spin 1s infinite linear;
         }
-        .cv-text { font-family: monospace; color: #fff; font-size: 14px; text-align: center; }
-        .cv-sub { color: #888; font-size: 11px; margin-top: 5px; }
-
-        /* 底部 */
+        
+        /* --- 底部控制區 --- */
         .controls { 
-            background: #111; padding: 15px 20px; flex-shrink: 0; z-index: 20;
-            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 15px; align-items: center;
+            background: #111; padding: 10px 15px; flex-shrink: 0; z-index: 20;
+            border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 65px; gap: 10px;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
-        .slider-row { width: 100%; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: bold; color: #aaa; }
-        .label { width: 50px; text-align: right; }
-        input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #444; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+        .sliders-col { display: flex; flex-direction: column; gap: 8px; }
+        .slider-row { width: 100%; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: bold; color: #aaa; }
+        .label { width: 35px; text-align: right; }
+        .value-disp { width: 30px; text-align: right; font-family: monospace; }
         
-        .ac-clarity input { accent-color: #00d2ff; }
+        input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #444; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
+        
+        .ac-iso input { accent-color: #ff0055; }
+        .ac-focus input { accent-color: #ffff00; }
+        .ac-ev input { accent-color: #00d2ff; }
         .ac-zoom input { accent-color: #00ff88; }
 
+        .af-btn {
+            background: #333; color: #fff; border: 1px solid #555; padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer; width: 30px; text-align: center;
+        }
+        .af-btn.manual { background: #ffff00; color: #000; font-weight: bold; }
+
+        .shutter-col { display: flex; align-items: center; justify-content: center; }
         .shutter {
-            width: 72px; height: 72px; border-radius: 50%;
+            width: 64px; height: 64px; border-radius: 50%;
             border: 4px solid rgba(255,255,255,0.3);
             background: radial-gradient(circle, #fff 30%, #00d2ff 100%);
             cursor: pointer; transition: 0.1s; position: relative;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
         }
         .shutter:active { transform: scale(0.95); }
+
+        /* OpenCV 狀態 */
+        #cv-ready-dot {
+            width: 8px; height: 8px; background: #333; border-radius: 50%; position: absolute; top: 18px; right: 18px; z-index: 25; border: 1px solid #555;
+        }
+        #cv-ready-dot.ready { background: #00ff88; box-shadow: 0 0 5px #00ff88; }
 
         @keyframes spin { 100% { transform: rotate(360deg); } }
         canvas { display: none; }
@@ -84,63 +127,111 @@
     <div class="top-bar">
         <div class="row">
             <select id="cameraSelect"><option>Loading...</option></select>
-            <div id="cvStatus" class="engine-status"><div class="dot"></div> Engine Init...</div>
+            <div class="light-group">
+                <button class="light-btn active" id="light-off" onclick="setLightMode('off')">🚫</button>
+                <button class="light-btn" id="light-flash" onclick="setLightMode('flash')">⚡</button>
+                <button class="light-btn" id="light-torch" onclick="setLightMode('torch')">🔦</button>
+            </div>
         </div>
-        <div class="row">
-            <label class="feature-toggle">
-                <input type="checkbox" id="claheToggle" checked>
-                <span>✨ 智慧通透 (CLAHE)</span>
+        <div class="row" style="justify-content: flex-start; gap: 4px; flex-wrap: wrap;">
+            <select id="hdrCount" style="max-width: 45px; font-size:11px;">
+                <option value="3">3x</option>
+                <option value="5">5x</option>
+                <option value="7">7x</option>
+            </select>
+            <label class="toggle-btn t-hdr active" id="btn-hdr">
+                <input type="checkbox" id="hdrToggle" checked onchange="toggleStyle(this, 'btn-hdr')"> HDR
             </label>
-            <label class="feature-toggle">
-                <input type="checkbox" id="denoiseToggle" checked>
-                <span>💧 雙邊降噪</span>
+            <label class="toggle-btn t-cv active" id="btn-clahe">
+                <input type="checkbox" id="claheToggle" checked onchange="toggleStyle(this, 'btn-clahe')"> 通透
+            </label>
+            <label class="toggle-btn t-cv active" id="btn-denoise">
+                <input type="checkbox" id="denoiseToggle" checked onchange="toggleStyle(this, 'btn-denoise')"> 降噪
+            </label>
+            <label class="toggle-btn t-upscale" id="btn-upscale">
+                <input type="checkbox" id="upscaleToggle" onchange="toggleStyle(this, 'btn-upscale')"> 2x
             </label>
         </div>
     </div>
 
-    <div class="viewport">
+    <div class="viewport" id="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
+        <div id="status-pill">Init...</div>
+        <div id="cv-ready-dot" title="CV Engine Status"></div>
         
-        <div id="cv-hud">
-            <div class="cv-spinner"></div>
-            <div class="cv-text">
-                <div id="cv-step">Processing...</div>
-                <div id="cv-detail" class="cv-sub">OpenCV Algorithm</div>
-            </div>
+        <div id="focus-reticle"></div>
+
+        <div id="mask">
+            <div class="spinner"></div>
+            <div id="mask-text" style="color:#00d2ff; font-family:monospace;">Processing...</div>
         </div>
     </div>
 
     <div class="controls">
-        <div class="slider-row ac-clarity">
-            <span class="label">清晰度</span>
-            <input type="range" id="sharpnessSlider" min="0" max="100" value="50">
+        <div class="sliders-col">
+            <div class="slider-row ac-iso">
+                <span class="label">ISO</span>
+                <input type="range" id="isoSlider" min="100" max="3200" step="100" value="100">
+                <span id="isoText" class="value-disp">Auto</span>
+            </div>
+            
+            <div class="slider-row ac-focus">
+                <span class="label">對焦</span>
+                <input type="range" id="focusSlider" min="0" max="100" step="1" value="0" disabled>
+                <div id="afBtn" class="af-btn" onclick="toggleAF()">AF</div>
+            </div>
+
+            <div class="slider-row ac-ev">
+                <span class="label">EV</span>
+                <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
+                <span id="evText" class="value-disp">0</span>
+            </div>
+
+            <div class="slider-row ac-zoom">
+                <span class="label">Zoom</span>
+                <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+                <span id="zoomText" class="value-disp">1.0</span>
+            </div>
         </div>
-        <div class="slider-row ac-zoom">
-            <span class="label">Zoom</span>
-            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+
+        <div class="shutter-col">
+            <div class="shutter" onclick="capture()"></div>
         </div>
-        <div class="shutter" onclick="capture()"></div>
     </div>
 
-    <canvas id="canvas"></canvas>
+    <canvas id="cFinal"></canvas>
+    <canvas id="cUpscale"></canvas>
 
 <script>
     const video = document.getElementById('videoPreview');
-    const cvStatus = document.getElementById('cvStatus');
-    const hud = document.getElementById('cv-hud');
-    const cvStep = document.getElementById('cv-step');
-    const cvDetail = document.getElementById('cv-detail');
+    const viewport = document.getElementById('viewport');
+    const statusPill = document.getElementById('status-pill');
+    const mask = document.getElementById('mask');
+    const maskText = document.getElementById('mask-text');
     const cameraSelect = document.getElementById('cameraSelect');
+    const focusReticle = document.getElementById('focus-reticle');
+    
+    // Sliders
+    const isoSlider = document.getElementById('isoSlider');
+    const focusSlider = document.getElementById('focusSlider');
+    const afBtn = document.getElementById('afBtn');
     
     let currentStream, videoTrack, imageCapture;
+    let hardwareExposure = false;
+    let hardwareIso = false;
+    let hardwareFocus = false;
+    let isSafeMode = false;
+    let softwareGain = 1.0; 
+    let currentLightMode = 'off'; 
+    let hasTorch = false;
     let isOpenCvReady = false;
+    let isManualFocus = false;
 
-    // OpenCV 載入回調
+    // OpenCV Ready Callback
     function onOpenCvReady() {
         isOpenCvReady = true;
-        cvStatus.innerHTML = '<div class="dot"></div> CV Engine Ready';
-        cvStatus.classList.add('ready');
-        console.log('OpenCV.js is ready');
+        document.getElementById('cv-ready-dot').classList.add('ready');
+        console.log("OpenCV Engine Loaded");
     }
 
     async function init() {
@@ -155,7 +246,8 @@
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
+                opt.text = d.label || `Camera ${i} (ID:${i})`;
+                opt.dataset.index = i;
                 cameraSelect.appendChild(opt);
             });
 
@@ -165,180 +257,352 @@
                 switchCamera(cams[lastIdx].deviceId, lastIdx);
             }
             cameraSelect.onchange = e => {
-                const idx = e.target.selectedIndex;
+                const idx = parseInt(e.target.selectedOptions[0].dataset.index);
                 switchCamera(e.target.value, idx);
             };
+            
+            // 點選對焦事件
+            viewport.addEventListener('click', triggerTapFocus);
+
         } catch(e) { alert("請允許相機權限"); }
     }
 
     async function switchCamera(id, index) {
+        setLightMode('off');
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
-        try {
-            // 混合策略: Camera 2 用 VGA, 其他用 4K
-            const constraints = (index === 2) 
-                ? { video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }
-                : { video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } };
-            
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            currentStream = stream;
-            video.srcObject = stream;
-            videoTrack = stream.getVideoTracks()[0];
-            
-            if(window.ImageCapture) try{ imageCapture = new ImageCapture(videoTrack); }catch(e){}
-
-            const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-            const zs = document.getElementById('zoomSlider');
-            if(caps.zoom) {
-                zs.disabled = false;
-                zs.min = caps.zoom.min;
-                zs.max = Math.min(caps.zoom.max, 8);
-                zs.value = 1;
-                zs.oninput = function() { videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); }
-            } else { zs.disabled = true; }
-
-        } catch(e) { alert("啟動失敗"); }
-    }
-
-    async function capture() {
-        if (!isOpenCvReady) {
-            alert("OpenCV 引擎尚未載入完成，請稍候...");
-            return;
-        }
-
-        hud.style.display = 'flex';
-        cvStep.innerText = "Capturing...";
-        cvDetail.innerText = "Accessing hardware sensor";
+        statusPill.innerText = "切換中...";
+        isSafeMode = false;
 
         try {
-            // 1. 獲取原圖 (High Quality)
-            let bmp;
-            if(imageCapture) {
-                try {
-                    const blob = await imageCapture.takePhoto();
-                    bmp = await createImageBitmap(blob);
-                } catch(e) { bmp = await grabFrame(); }
+            if (index === 2) { 
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA");
+                isSafeMode = true; 
             } else {
-                bmp = await grabFrame();
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K");
             }
-
-            // 2. 轉繪到 Canvas
-            const canvas = document.getElementById('canvas');
-            canvas.width = bmp.width;
-            canvas.height = bmp.height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(bmp, 0, 0);
-
-            // 3. 進入 OpenCV 處理流程
-            // 給 UI 一點時間刷新
-            setTimeout(() => processWithOpenCV(canvas), 100);
-
-        } catch(e) {
-            alert("Error: " + e.message);
-            hud.style.display = 'none';
+        } catch(e1) {
+            try {
+                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "SafeMode");
+                isSafeMode = true; 
+            } catch(e2) {
+                statusPill.innerText = "Error";
+                alert("無法啟動");
+            }
         }
     }
 
-    async function grabFrame() {
+    async function launch(constraints, label) {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        video.srcObject = stream;
+        videoTrack = stream.getVideoTracks()[0];
+        
+        if(window.ImageCapture) {
+            try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
+        }
+
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        
+        // --- Light ---
+        hasTorch = !!caps.torch;
+        document.getElementById('light-torch').disabled = !hasTorch;
+
+        // --- Zoom ---
+        const zs = document.getElementById('zoomSlider');
+        if(caps.zoom) {
+            zs.disabled = false;
+            zs.min = caps.zoom.min;
+            zs.max = Math.min(caps.zoom.max, 8);
+            zs.value = 1;
+            zs.oninput = function() { 
+                document.getElementById('zoomText').innerText = parseFloat(this.value).toFixed(1);
+                videoTrack.applyConstraints({advanced:[{zoom:this.value}]}); 
+            }
+        } else { zs.disabled = true; }
+
+        // --- ISO (Visual Hybrid) ---
+        hardwareIso = !!caps.iso;
+        isoSlider.min = hardwareIso ? caps.iso.min : 100;
+        isoSlider.max = hardwareIso ? caps.iso.max : 3200;
+        isoSlider.value = isoSlider.min;
+        document.getElementById('isoText').innerText = "Auto";
+        softwareGain = 1.0;
+        video.style.filter = "none";
+
+        isoSlider.oninput = function() {
+            const val = parseInt(this.value);
+            document.getElementById('isoText').innerText = val;
+            softwareGain = 1.0 + ((val - 100) / 1000);
+            video.style.filter = `brightness(${softwareGain})`; // Immediate preview
+            if(hardwareIso) videoTrack.applyConstraints({ advanced: [{ iso: val }] }).catch(()=>{});
+        };
+
+        // --- Focus ---
+        hardwareFocus = caps.focusMode && caps.focusMode.includes('manual');
+        if (hardwareFocus) {
+            afBtn.style.opacity = "1";
+            afBtn.style.pointerEvents = "auto";
+            setFocusMode('auto');
+        } else {
+            afBtn.style.opacity = "0.3";
+            afBtn.style.pointerEvents = "none";
+            focusSlider.disabled = true;
+        }
+
+        hardwareExposure = !!caps.exposureCompensation;
+        video.onloadedmetadata = () => {
+            statusPill.innerText = label;
+            if(isSafeMode) statusPill.classList.add("warn-mode");
+            else statusPill.classList.remove("warn-mode");
+        };
+    }
+
+    // --- 對焦邏輯 ---
+    function toggleAF() {
+        if(!hardwareFocus) return;
+        setFocusMode(isManualFocus ? 'auto' : 'manual');
+    }
+
+    function setFocusMode(mode) {
+        if(mode === 'manual') {
+            isManualFocus = true;
+            afBtn.innerText = "MF";
+            afBtn.classList.add("manual");
+            focusSlider.disabled = false;
+            videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] }).catch(()=>{});
+        } else {
+            isManualFocus = false;
+            afBtn.innerText = "AF";
+            afBtn.classList.remove("manual");
+            focusSlider.disabled = true;
+            videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        }
+    }
+
+    focusSlider.oninput = function() {
+        if(isManualFocus) {
+            const val = parseInt(this.value) / 100;
+            videoTrack.applyConstraints({ advanced: [{ focusDistance: val }] });
+        }
+    }
+
+    async function triggerTapFocus(e) {
+        if (!videoTrack) return;
+        // 如果是手動模式，切回 AF
+        if(isManualFocus) setFocusMode('auto');
+
+        const rect = viewport.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        focusReticle.style.left = `${x}px`;
+        focusReticle.style.top = `${y}px`;
+        focusReticle.style.display = 'block';
+        focusReticle.classList.remove('focusing');
+        void focusReticle.offsetWidth;
+        focusReticle.classList.add('focusing');
+
+        try {
+            // Trigger auto focus sequence
+            await videoTrack.applyConstraints({ advanced: [{ focusMode: 'auto' }] });
+            setTimeout(() => {
+                videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+            }, 1000);
+        } catch(e) {}
+    }
+
+    // --- 燈光邏輯 ---
+    window.setLightMode = async function(mode) {
+        if(!videoTrack) return;
+        document.querySelectorAll('.light-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`light-${mode}`).classList.add('active');
+        currentLightMode = mode;
+        try {
+            if (mode === 'torch') await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+            else if (hasTorch) await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
+        } catch(e) {}
+    }
+
+    // --- 拍攝與處理 ---
+    async function capture() {
+        mask.style.display = 'flex';
+        const isHdr = document.getElementById('hdrToggle').checked;
+        
+        try {
+            if(!isHdr) {
+                maskText.innerText = "Capturing...";
+                const opts = (currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
+                const bmp = await grabHighQuality(true, opts); 
+                await finalize(bmp, "Photo");
+            } else {
+                const count = parseInt(document.getElementById('hdrCount').value);
+                const frames = [];
+                const startEv = -((count-1)/2); 
+                const useSlowPath = isSafeMode; // 如果是安全模式，強制用 takePhoto 確保畫質
+
+                for(let i=0; i<count; i++) {
+                    const ev = startEv + i;
+                    maskText.innerText = `HDR ${i+1}/${count}`;
+                    await setEV(ev);
+                    await sleep(useSlowPath ? 400 : 150); 
+                    const bmp = await grabHighQuality(useSlowPath); 
+                    frames.push({ ev: ev, img: bmp });
+                }
+                await setEV(0);
+                maskText.innerText = "Merging...";
+                await processHDR(frames);
+            }
+        } catch(e) {
+            console.error(e);
+            alert("拍攝失敗");
+            mask.style.display = 'none';
+        }
+    }
+
+    async function grabHighQuality(forceTakePhoto = false, opts={}) {
+        if(imageCapture && (forceTakePhoto || true)) { 
+            try {
+                const blob = await imageCapture.takePhoto(opts);
+                return await createImageBitmap(blob);
+            } catch(e) {}
+        }
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
         c.getContext('2d').drawImage(video, 0, 0);
         return c;
     }
 
-    // ★★★ OpenCV 演算法核心 ★★★
-    function processWithOpenCV(canvas) {
-        try {
-            const src = cv.imread(canvas);
-            const dst = new cv.Mat();
-            
-            const isClahe = document.getElementById('claheToggle').checked;
-            const isDenoise = document.getElementById('denoiseToggle').checked;
-            const sharpLevel = parseInt(document.getElementById('sharpnessSlider').value);
+    async function processHDR(frames) {
+        const base = frames[Math.floor(frames.length / 2)];
+        const canvas = document.getElementById('cFinal');
+        canvas.width = base.img.width; canvas.height = base.img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(base.img, 0, 0);
+        ctx.globalAlpha = 0.5; 
+        frames.forEach(f => {
+            if(f.ev < 0) { ctx.globalCompositeOperation = 'darken'; ctx.drawImage(f.img, 0, 0); } 
+            else if(f.ev > 0) { ctx.globalCompositeOperation = 'lighten'; ctx.drawImage(f.img, 0, 0); }
+        });
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
+        await finalize(canvas, "HDR");
+    }
 
-            // --- 步驟 1: 色彩空間轉換 (RGB -> Lab) ---
-            // 我們只處理 L (亮度) 通道，這樣可以避免顏色失真
-            cvStep.innerText = "Color Space Transform";
-            cvDetail.innerText = "RGB to Lab conversion";
-            
-            const lab = new cv.Mat();
-            cv.cvtColor(src, lab, cv.COLOR_RGBA2RGB); // 先轉 RGB
-            cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
-            
-            const labPlanes = new cv.MatVector();
-            cv.split(lab, labPlanes); // 分離通道: L, a, b
-            const L = labPlanes.get(0);
+    async function finalize(source, prefix) {
+        const isUpscale = document.getElementById('upscaleToggle').checked;
+        const isClahe = document.getElementById('claheToggle').checked;
+        const isDenoise = document.getElementById('denoiseToggle').checked;
+        const isPng = document.getElementById('rawToggle').checked;
+        
+        let canvas = document.getElementById('cFinal');
+        if(source instanceof ImageBitmap || source instanceof HTMLVideoElement) {
+            canvas.width = source.width; canvas.height = source.height;
+            canvas.getContext('2d').drawImage(source, 0, 0);
+        } else { canvas = source; }
 
-            // --- 步驟 2: 雙邊濾波 (Bilateral Filter) ---
-            // 這是「美肌」演算法：平滑表面但保留邊緣
-            if (isDenoise) {
-                cvStep.innerText = "AI Denoising";
-                cvDetail.innerText = "Bilateral Filter (Edge-Preserving)";
-                const tempL = new cv.Mat();
-                // d=5, sigmaColor=75, sigmaSpace=75 (標準參數)
-                cv.bilateralFilter(L, tempL, 5, 75, 75, cv.BORDER_DEFAULT);
-                tempL.copyTo(L);
-                tempL.delete();
-            }
-
-            // --- 步驟 3: CLAHE (自適應直方圖均衡化) ---
-            // 增強局部對比度，去除霧感
-            if (isClahe) {
-                cvStep.innerText = "Enhancing Contrast";
-                cvDetail.innerText = "CLAHE Algorithm";
-                // clipLimit=2.0, tileGridSize=(8,8)
-                const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-                clahe.apply(L, L);
-                clahe.delete();
-            }
-
-            // --- 步驟 4: Unsharp Mask (銳化) ---
-            // 公式: Sharp = Original + Amount * (Original - Blurred)
-            if (sharpLevel > 0) {
-                cvStep.innerText = "Applying Sharpness";
-                cvDetail.innerText = `Unsharp Mask (Level ${sharpLevel})`;
-                
-                const blurred = new cv.Mat();
-                const kSize = new cv.Size(0, 0); // 自動計算
-                const sigma = 3; 
-                cv.GaussianBlur(L, blurred, kSize, sigma);
-                
-                // 權重計算: 原圖 1.5倍, 模糊圖 -0.5倍 (數值依滑桿調整)
-                const amount = sharpLevel / 50; // 0 ~ 2.0
-                cv.addWeighted(L, 1 + amount, blurred, -amount, 0, L);
-                blurred.delete();
-            }
-
-            // --- 步驟 5: 合併與輸出 ---
-            cvStep.innerText = "Finalizing";
-            labPlanes.set(0, L); // 把處理好的 L 放回去
-            cv.merge(labPlanes, lab);
-            
-            cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB); // 轉回 RGB
-            
-            cv.imshow(canvas, dst); // 畫回 Canvas
-
-            // 清理記憶體 (重要！OpenCV在Web上很容易爆記憶體)
-            src.delete(); dst.delete(); lab.delete(); L.delete(); labPlanes.delete();
-
-            save(canvas);
-
-        } catch(err) {
-            console.error(err);
-            alert("演算法處理錯誤");
-            hud.style.display = 'none';
+        // 1. ISO Gain (Burn-in)
+        if (!hardwareIso && softwareGain > 1.0) {
+            const t = document.createElement('canvas'); t.width=canvas.width; t.height=canvas.height;
+            t.getContext('2d').drawImage(canvas, 0, 0);
+            const ctx = canvas.getContext('2d');
+            ctx.filter = `brightness(${softwareGain})`;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(t, 0, 0);
+            ctx.filter = 'none';
         }
+
+        // 2. OpenCV Processing (CLAHE / Denoise)
+        if (isOpenCvReady && (isClahe || isDenoise)) {
+            maskText.innerText = "AI Processing (OpenCV)...";
+            // 使用 setTimeout 讓 UI 有機會渲染文字
+            await new Promise(r => setTimeout(r, 50)); 
+            try {
+                processOpenCV(canvas, isClahe, isDenoise);
+            } catch(e) { console.error("CV Error", e); }
+        } else {
+            // Fallback sharpening if CV is not used
+            applyFilter(canvas.getContext('2d'), 'url(#smart-sharpen) contrast(1.1)');
+        }
+
+        // 3. Upscale
+        if(isUpscale && canvas.width * canvas.height < 20000000) {
+            maskText.innerText = "Upscaling 2x...";
+            const upCvs = document.getElementById('cUpscale');
+            upCvs.width = canvas.width * 2; upCvs.height = canvas.height * 2;
+            const uCtx = upCvs.getContext('2d');
+            uCtx.imageSmoothingEnabled = true;
+            uCtx.imageSmoothingQuality = 'high';
+            uCtx.drawImage(canvas, 0, 0, upCvs.width, upCvs.height);
+            // 輕微銳化以補償放大造成的模糊
+            applyFilter(uCtx, 'url(#upscale-sharpen)');
+            canvas = upCvs;
+        }
+
+        // 4. Save
+        const link = document.createElement('a');
+        link.download = `${prefix}_${Date.now()}.${isPng ? 'png' : 'jpg'}`;
+        link.href = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.95);
+        link.click();
+        mask.style.display = 'none';
     }
 
-    function save(canvas) {
-        const link = document.createElement('a');
-        link.download = `AI_CV_${Date.now()}.jpg`;
-        link.href = canvas.toDataURL('image/jpeg', 0.95);
-        link.click();
-        hud.style.display = 'none';
+    function processOpenCV(canvas, doClahe, doDenoise) {
+        const src = cv.imread(canvas);
+        const lab = new cv.Mat();
+        
+        // RGB -> Lab
+        cv.cvtColor(src, lab, cv.COLOR_RGBA2RGB);
+        cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
+        
+        const planes = new cv.MatVector();
+        cv.split(lab, planes);
+        const L = planes.get(0); // 亮度通道
+
+        // Denoise (Bilateral on L)
+        if (doDenoise) {
+            const temp = new cv.Mat();
+            cv.bilateralFilter(L, temp, 5, 50, 50, cv.BORDER_DEFAULT);
+            temp.copyTo(L);
+            temp.delete();
+        }
+
+        // CLAHE (On L)
+        if (doClahe) {
+            const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+            clahe.apply(L, L);
+            clahe.delete();
+        }
+
+        // Merge back
+        planes.set(0, L);
+        cv.merge(planes, lab);
+        
+        const dst = new cv.Mat();
+        cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
+        
+        cv.imshow(canvas, dst);
+        
+        src.delete(); lab.delete(); planes.delete(); L.delete(); dst.delete();
     }
+
+    async function setEV(val) { if(hardwareExposure) try{await videoTrack.applyConstraints({advanced:[{exposureCompensation:val}]})}catch(e){} }
+    function applyFilter(ctx, filter) {
+        const t = document.createElement('canvas'); t.width=ctx.canvas.width; t.height=ctx.canvas.height;
+        t.getContext('2d').drawImage(ctx.canvas,0,0);
+        ctx.filter = filter;
+        ctx.clearRect(0,0,t.width,t.height);
+        ctx.drawImage(t,0,0);
+        ctx.filter = 'none';
+    }
+    function toggleStyle(el, labelId) { document.getElementById(labelId).classList.toggle('active', el.checked); }
+    
+    document.getElementById('evRange').oninput = function() { 
+        document.getElementById('evText').innerText = this.value;
+        setEV(parseFloat(this.value));
+    };
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     init();
 </script>
 </body>
 </html>
-
