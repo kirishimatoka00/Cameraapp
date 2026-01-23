@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Cam (ISO Fixed)</title>
+    <title>AI Tracking Cam</title>
     <style>
         body { margin: 0; background: #000; font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
+        /* 頂部 */
         .top-bar { 
             background: rgba(20,20,25,0.95); padding: 8px 12px; z-index: 20;
             display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #333;
@@ -17,21 +18,39 @@
         
         select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 13px; flex-grow: 1; max-width: 120px; }
         
-        /* 功能開關 */
         .toggle-btn {
             background: #222; border: 1px solid #444; color: #aaa; padding: 4px 8px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap;
         }
         .toggle-btn input { margin: 0; }
         .toggle-btn.active { border-color: #00d2ff; color: #00d2ff; font-weight: bold; }
+
+        /* 燈光控制 */
+        .light-group { display: flex; background: #222; border-radius: 8px; border: 1px solid #444; padding: 2px; }
+        .light-btn { padding: 5px 10px; font-size: 14px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #666; transition: 0.2s; }
+        .light-btn.active { background: #ffd700; color: #000; font-weight: bold; box-shadow: 0 0 10px rgba(255, 215, 0, 0.4); }
         
         /* 視窗 */
         .viewport { 
             flex-grow: 1; position: relative; background: #111; overflow: hidden;
             display: flex; justify-content: center; align-items: center; 
         }
-        video { width: 100%; height: 100%; object-fit: contain; transition: filter 0.1s; }
+        video { width: 100%; height: 100%; object-fit: contain; }
 
-        /* 狀態標籤 */
+        /* 追蹤框 (Target Reticle) */
+        #tracker-box {
+            position: absolute; width: 80px; height: 80px;
+            border: 2px solid #00ff00; border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+            display: none; pointer-events: none; transition: all 0.1s linear;
+            z-index: 10;
+        }
+        #tracker-box::before, #tracker-box::after {
+            content: ''; position: absolute; background: #00ff00;
+        }
+        /* 十字準心 */
+        #tracker-box::before { top: 50%; left: 20%; right: 20%; height: 1px; }
+        #tracker-box::after { left: 50%; top: 20%; bottom: 20%; width: 1px; }
+
         #status-pill {
             position: absolute; top: 15px; left: 15px;
             background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px;
@@ -52,27 +71,40 @@
         
         /* 底部 */
         .controls { 
-            background: #111; padding: 10px 20px; flex-shrink: 0; z-index: 20;
-            border-top: 1px solid #333; display: flex; flex-direction: column; gap: 10px; align-items: center;
+            background: #111; padding: 10px 15px; flex-shrink: 0; z-index: 20;
+            border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 60px; gap: 10px;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
-        .slider-row { width: 100%; display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: bold; color: #aaa; }
+        .sliders-col { display: flex; flex-direction: column; gap: 10px; }
+        .slider-row { width: 100%; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: bold; color: #aaa; }
         .label { width: 35px; text-align: right; }
+        .value-disp { width: 30px; text-align: right; font-family: monospace; }
+        
         input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #444; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
         
-        .ac-zoom input { accent-color: #00ff88; }
-        .ac-ev input { accent-color: #00d2ff; }
         .ac-iso input { accent-color: #ff0055; }
+        .ac-focus input { accent-color: #ffff00; }
+        .ac-ev input { accent-color: #00d2ff; }
+        .ac-zoom input { accent-color: #00ff88; }
 
+        /* AF/MF/Track 按鈕 */
+        .af-btn {
+            background: #333; color: #fff; border: 1px solid #555; padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer; width: 35px; text-align: center;
+        }
+        .af-btn.tracking { background: #00ff00; color: #000; font-weight: bold; border-color: #fff; animation: pulse 2s infinite; }
+        .af-btn.manual { background: #ffff00; color: #000; font-weight: bold; }
+
+        @keyframes pulse { 0% {box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7);} 70% {box-shadow: 0 0 0 5px rgba(0, 255, 0, 0);} 100% {box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);} }
+
+        .shutter-col { display: flex; align-items: center; justify-content: center; }
         .shutter {
-            width: 68px; height: 68px; border-radius: 50%;
+            width: 64px; height: 64px; border-radius: 50%;
             border: 4px solid rgba(255,255,255,0.3);
             background: radial-gradient(circle, #fff 30%, #00d2ff 100%);
             cursor: pointer; transition: 0.1s; position: relative;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
-            margin-top: 5px;
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
         }
         .shutter:active { transform: scale(0.95); }
 
@@ -96,13 +128,18 @@
     <div class="top-bar">
         <div class="row">
             <select id="cameraSelect"><option>Loading...</option></select>
+            <div class="light-group">
+                <button class="light-btn active" id="light-off" onclick="setLightMode('off')">🚫</button>
+                <button class="light-btn" id="light-flash" onclick="setLightMode('flash')">⚡</button>
+                <button class="light-btn" id="light-torch" onclick="setLightMode('torch')">🔦</button>
+            </div>
+        </div>
+        <div class="row" style="justify-content: flex-start; gap: 5px; flex-wrap: wrap;">
             <select id="hdrCount" style="max-width: 50px;">
                 <option value="3">3x</option>
                 <option value="5">5x</option>
                 <option value="7">7x</option>
             </select>
-        </div>
-        <div class="row" style="justify-content: flex-start; gap: 5px; flex-wrap: wrap;">
             <label class="toggle-btn active" id="hdrBtn">
                 <input type="checkbox" id="hdrToggle" checked onchange="toggleStyle(this, 'hdrBtn')"> HDR
             </label>
@@ -121,6 +158,10 @@
     <div class="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
         <div id="status-pill">Init...</div>
+        
+        <!-- 追蹤對焦框 -->
+        <div id="tracker-box"></div>
+
         <div id="mask">
             <div class="spinner"></div>
             <div id="mask-text" style="color:#00d2ff; font-family:monospace;">Processing...</div>
@@ -128,27 +169,45 @@
     </div>
 
     <div class="controls">
-        <!-- ISO 滑桿 (現在是混合式) -->
-        <div class="slider-row ac-iso">
-            <span class="label">ISO</span>
-            <input type="range" id="isoSlider" min="100" max="3200" step="50" value="100">
-            <span id="isoText" style="width:35px; text-align:right">Auto</span>
+        <div class="sliders-col">
+            <!-- 1. ISO -->
+            <div class="slider-row ac-iso">
+                <span class="label">ISO</span>
+                <input type="range" id="isoSlider" min="100" max="3200" step="100" value="100">
+                <span id="isoText" class="value-disp">Auto</span>
+            </div>
+            
+            <!-- 2. Focus + Tracking (新功能) -->
+            <div class="slider-row ac-focus">
+                <span class="label">對焦</span>
+                <input type="range" id="focusSlider" min="0" max="100" step="1" value="0" disabled>
+                <div id="afBtn" class="af-btn" onclick="cycleFocusMode()">AF</div>
+            </div>
+
+            <!-- 3. EV -->
+            <div class="slider-row ac-ev">
+                <span class="label">EV</span>
+                <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
+                <span id="evText" class="value-disp">0</span>
+            </div>
+
+            <!-- 4. Zoom -->
+            <div class="slider-row ac-zoom">
+                <span class="label">Zoom</span>
+                <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+                <span id="zoomText" class="value-disp">1.0</span>
+            </div>
         </div>
-        <div class="slider-row ac-ev">
-            <span class="label">EV</span>
-            <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
-            <span id="evText" style="width:35px; text-align:right">0</span>
+
+        <div class="shutter-col">
+            <div class="shutter" onclick="capture()"></div>
         </div>
-        <div class="slider-row ac-zoom">
-            <span class="label">Zoom</span>
-            <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
-            <span id="zoomText" style="width:35px; text-align:right">1.0</span>
-        </div>
-        <div class="shutter" onclick="capture()"></div>
     </div>
 
     <canvas id="cFinal"></canvas>
     <canvas id="cUpscale"></canvas>
+    <!-- 分析用小畫布 (動作偵測) -->
+    <canvas id="cMotion" width="64" height="64"></canvas>
 
 <script>
     const video = document.getElementById('videoPreview');
@@ -156,14 +215,26 @@
     const mask = document.getElementById('mask');
     const maskText = document.getElementById('mask-text');
     const cameraSelect = document.getElementById('cameraSelect');
+    
+    // Controls
     const isoSlider = document.getElementById('isoSlider');
-    const isoText = document.getElementById('isoText');
+    const focusSlider = document.getElementById('focusSlider');
+    const afBtn = document.getElementById('afBtn');
+    const trackerBox = document.getElementById('tracker-box');
     
     let currentStream, videoTrack, imageCapture;
     let hardwareExposure = false;
     let hardwareIso = false;
+    let hardwareFocus = false;
     let isSafeMode = false;
-    let currentSoftwareIsoGain = 1.0; // 軟體增益值 (1.0 = 原圖, 2.0 = 2倍亮)
+    let softwareGain = 1.0; 
+    let currentLightMode = 'off'; 
+    let hasTorch = false;
+
+    // 對焦模式: 'af' (自動), 'mf' (手動), 'track' (追蹤)
+    let focusModeState = 'af';
+    let trackingInterval;
+    let prevFrameData = null;
 
     async function init() {
         try {
@@ -187,16 +258,17 @@
                 cameraSelect.selectedIndex = lastIdx;
                 switchCamera(cams[lastIdx].deviceId, lastIdx);
             }
-            
             cameraSelect.onchange = e => {
                 const idx = parseInt(e.target.selectedOptions[0].dataset.index);
                 switchCamera(e.target.value, idx);
             };
-
         } catch(e) { alert("請允許相機權限"); }
     }
 
     async function switchCamera(id, index) {
+        setLightMode('off');
+        stopTracking(); // 切換鏡頭時停止追蹤
+        
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
         statusPill.innerText = "切換中...";
         isSafeMode = false;
@@ -213,7 +285,7 @@
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "SafeMode");
                 isSafeMode = true; 
             } catch(e2) {
-                statusPill.innerText = "Fatal Error";
+                statusPill.innerText = "Error";
                 alert("無法啟動");
             }
         }
@@ -231,6 +303,10 @@
 
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
         
+        // Torch
+        hasTorch = !!caps.torch;
+        document.getElementById('light-torch').disabled = !hasTorch;
+
         // Zoom
         const zs = document.getElementById('zoomSlider');
         if(caps.zoom) {
@@ -244,75 +320,175 @@
             }
         } else { zs.disabled = true; }
 
-        // ★★★ 混合 ISO 引擎 (Hybrid ISO) ★★★
-        if(caps.iso) {
-            hardwareIso = true;
-            isoSlider.min = caps.iso.min;
-            isoSlider.max = caps.iso.max;
-            statusPill.innerText = `${label} | ISO: Hard`;
-        } else {
-            hardwareIso = false;
-            // 軟體模擬 ISO: 100 (基準) ~ 3200 (增亮)
-            isoSlider.min = 100;
-            isoSlider.max = 3200;
-            statusPill.innerText = `${label} | ISO: Soft`;
-        }
-        isoSlider.value = 100; // Reset
-        isoText.innerText = "100";
-        currentSoftwareIsoGain = 1.0;
-        video.style.filter = "none"; // Reset preview filter
+        // ISO
+        hardwareIso = !!caps.iso;
+        isoSlider.min = hardwareIso ? caps.iso.min : 100;
+        isoSlider.max = hardwareIso ? caps.iso.max : 3200;
+        isoSlider.value = isoSlider.min;
+        document.getElementById('isoText').innerText = "Auto";
+        softwareGain = 1.0;
+        video.style.filter = "none";
 
-        // ISO 滑桿事件
         isoSlider.oninput = function() {
             const val = parseInt(this.value);
-            isoText.innerText = val;
-            
-            if(hardwareIso) {
-                // 硬體控制
-                videoTrack.applyConstraints({ advanced: [{ iso: val }] })
-                    .catch(e => {
-                        // 如果硬體指令失敗，自動切換回軟體模式
-                        hardwareIso = false;
-                        applySoftwareISO(val);
-                    });
-            } else {
-                // 軟體控制
-                applySoftwareISO(val);
-            }
+            document.getElementById('isoText').innerText = val;
+            softwareGain = 1.0 + ((val - 100) / 1000);
+            video.style.filter = `brightness(${softwareGain})`;
+            if(hardwareIso) videoTrack.applyConstraints({ advanced: [{ iso: val }] }).catch(()=>{});
         };
 
-        // EV
+        // Focus & Tracking Capability
+        hardwareFocus = caps.focusMode && caps.focusMode.includes('manual');
+        resetFocusUI();
+
         hardwareExposure = !!caps.exposureCompensation;
         
         video.onloadedmetadata = () => {
-            if(isSafeMode || label.includes("VGA")) {
-                statusPill.classList.add("warn-mode");
-            } else {
-                statusPill.classList.remove("warn-mode");
-            }
+            statusPill.innerText = label;
+            if(isSafeMode) statusPill.classList.add("warn-mode");
+            else statusPill.classList.remove("warn-mode");
         };
     }
 
-    // 軟體 ISO 計算 (模擬增益)
-    function applySoftwareISO(isoVal) {
-        // 假設 100 是基準 1.0
-        // ISO 3200 大約是 32 倍增益，但在數位模擬上太亮會過曝，我們用 Log 曲線讓它柔和一點
-        // 簡單映射: 100 -> 1.0, 3200 -> 3.0 (3倍亮度)
-        const gain = 1.0 + ((isoVal - 100) / 1550); 
-        currentSoftwareIsoGain = gain;
-        
-        // 即時改變預覽亮度
-        video.style.filter = `brightness(${gain})`;
+    // ★★★ 焦點模式循環 (AF -> MF -> Track) ★★★
+    function cycleFocusMode() {
+        if(focusModeState === 'af') {
+            // 切換到手動 (MF)
+            if(hardwareFocus) {
+                focusModeState = 'mf';
+                afBtn.innerText = "MF";
+                afBtn.className = "af-btn manual";
+                focusSlider.disabled = false;
+                videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
+            } else {
+                // 如果不支援手動，直接跳到追蹤
+                startTrackingMode();
+            }
+        } else if(focusModeState === 'mf') {
+            // 切換到追蹤 (Track)
+            startTrackingMode();
+        } else {
+            // 切換回自動 (AF)
+            stopTracking();
+            focusModeState = 'af';
+            afBtn.innerText = "AF";
+            afBtn.className = "af-btn";
+            focusSlider.disabled = true;
+            videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        }
     }
 
+    function resetFocusUI() {
+        stopTracking();
+        focusModeState = 'af';
+        afBtn.innerText = "AF";
+        afBtn.className = "af-btn";
+        afBtn.style.opacity = "1";
+        focusSlider.disabled = true;
+    }
+
+    // 手動對焦控制
+    focusSlider.oninput = function() {
+        if(focusModeState === 'mf') {
+            const val = parseInt(this.value) / 100; // 0.0 - 1.0
+            videoTrack.applyConstraints({ advanced: [{ focusDistance: val }] });
+        }
+    }
+
+    // ★★★ 追蹤對焦系統 ★★★
+    function startTrackingMode() {
+        focusModeState = 'track';
+        afBtn.innerText = "🎯";
+        afBtn.className = "af-btn tracking";
+        focusSlider.disabled = true;
+        trackerBox.style.display = 'block';
+        
+        // 追蹤模式下，強制開啟連續對焦，讓硬體去跟
+        videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(()=>{});
+
+        // 啟動視覺追蹤運算
+        if(trackingInterval) clearInterval(trackingInterval);
+        const cvs = document.getElementById('cMotion');
+        const ctx = cvs.getContext('2d');
+        prevFrameData = null;
+
+        trackingInterval = setInterval(() => {
+            if(video.readyState !== 4) return;
+            
+            // 1. 抓縮圖 (64x64)
+            ctx.drawImage(video, 0, 0, 64, 64);
+            const frame = ctx.getImageData(0, 0, 64, 64);
+            const data = frame.data;
+
+            if(prevFrameData) {
+                let maxDiff = 0;
+                let avgX = 0, avgY = 0, count = 0;
+
+                // 2. 差異比對 (Motion Detection)
+                for(let i=0; i<data.length; i+=16) { // 快速採樣
+                    const diff = Math.abs(data[i] - prevFrameData[i]) + 
+                                 Math.abs(data[i+1] - prevFrameData[i+1]) +
+                                 Math.abs(data[i+2] - prevFrameData[i+2]);
+                    
+                    if(diff > 30) { // 閾值: 視為移動
+                        const idx = i / 4;
+                        const x = idx % 64;
+                        const y = Math.floor(idx / 64);
+                        avgX += x;
+                        avgY += y;
+                        count++;
+                    }
+                }
+
+                // 3. 更新追蹤框位置 (Center of Motion)
+                if(count > 5) { // 有足夠多的移動點
+                    const cx = (avgX / count) / 64 * 100; // 轉為 %
+                    const cy = (avgY / count) / 64 * 100;
+                    
+                    // 平滑移動 (Lerp)
+                    trackerBox.style.left = `calc(${cx}% - 40px)`;
+                    trackerBox.style.top = `calc(${cy}% - 40px)`;
+                    trackerBox.style.borderColor = "#00ff00"; // 鎖定綠色
+                } else {
+                    trackerBox.style.borderColor = "#555"; // 靜止灰色
+                }
+            }
+            prevFrameData = data;
+        }, 100); // 10fps 偵測
+    }
+
+    function stopTracking() {
+        if(trackingInterval) clearInterval(trackingInterval);
+        trackerBox.style.display = 'none';
+        prevFrameData = null;
+    }
+
+    // ★★★ 燈光控制 ★★★
+    window.setLightMode = async function(mode) {
+        if(!videoTrack) return;
+        document.querySelectorAll('.light-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`light-${mode}`).classList.add('active');
+        currentLightMode = mode;
+
+        try {
+            if (mode === 'torch') {
+                await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+            } else {
+                if (hasTorch) await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
+            }
+        } catch(e) {}
+    }
+
+    // 拍攝與合成 (保留之前的完整功能)
     async function capture() {
         mask.style.display = 'flex';
         const isHdr = document.getElementById('hdrToggle').checked;
         
         try {
             if(!isHdr) {
-                maskText.innerText = "Capturing HQ...";
-                const bmp = await grabHighQuality(true); 
+                maskText.innerText = "Capturing...";
+                const opts = (currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
+                const bmp = await grabHighQuality(true, opts); 
                 await finalize(bmp, "Photo");
             } else {
                 const count = parseInt(document.getElementById('hdrCount').value);
@@ -333,18 +509,17 @@
                 await processHDR(frames);
             }
         } catch(e) {
-            console.error(e);
-            alert("拍攝失敗: " + e.message);
+            alert("Error: " + e.message);
             mask.style.display = 'none';
         }
     }
 
-    async function grabHighQuality(forceTakePhoto = false) {
+    async function grabHighQuality(forceTakePhoto = false, opts={}) {
         if(imageCapture && (forceTakePhoto || true)) { 
             try {
-                const blob = await imageCapture.takePhoto();
+                const blob = await imageCapture.takePhoto(opts);
                 return await createImageBitmap(blob);
-            } catch(e) { console.log("fallback"); }
+            } catch(e) {}
         }
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
@@ -353,29 +528,18 @@
     }
 
     async function processHDR(frames) {
-        const baseIdx = Math.floor(frames.length / 2);
-        const base = frames[baseIdx];
-        
+        const base = frames[Math.floor(frames.length / 2)];
         const canvas = document.getElementById('cFinal');
         canvas.width = base.img.width; canvas.height = base.img.height;
         const ctx = canvas.getContext('2d');
-        
         ctx.drawImage(base.img, 0, 0);
         ctx.globalAlpha = 0.5; 
-        
         frames.forEach(f => {
-            if(f.ev < 0) {
-                ctx.globalCompositeOperation = 'darken';
-                ctx.drawImage(f.img, 0, 0);
-            } else if(f.ev > 0) {
-                ctx.globalCompositeOperation = 'lighten';
-                ctx.drawImage(f.img, 0, 0);
-            }
+            if(f.ev < 0) { ctx.globalCompositeOperation = 'darken'; ctx.drawImage(f.img, 0, 0); } 
+            else if(f.ev > 0) { ctx.globalCompositeOperation = 'lighten'; ctx.drawImage(f.img, 0, 0); }
         });
-
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
-        
         applyFilter(ctx, 'url(#smart-sharpen) contrast(1.1)');
         await finalize(canvas, "HDR");
     }
@@ -392,51 +556,36 @@
         } else { canvas = source; }
 
         const ctx = canvas.getContext('2d');
-
-        // ★ 應用軟體 ISO 增益 (如果沒用到硬體 ISO) ★
-        // 這是讓「假 ISO」成真的關鍵：把增益寫進像素裡
-        if (!hardwareIso && currentSoftwareIsoGain > 1.0) {
-            maskText.innerText = "Applying Digital Gain...";
-            // 使用 filter 進行亮度提升
+        if (softwareGain > 1.0) {
             const t = document.createElement('canvas'); t.width=canvas.width; t.height=canvas.height;
             t.getContext('2d').drawImage(canvas, 0, 0);
-            ctx.filter = `brightness(${currentSoftwareIsoGain})`;
+            ctx.filter = `brightness(${softwareGain})`;
             ctx.clearRect(0,0,canvas.width,canvas.height);
             ctx.drawImage(t, 0, 0);
             ctx.filter = 'none';
         }
+        if(isDenoise) applyFilter(ctx, 'url(#soft-denoise)');
 
-        if(isDenoise) {
-            maskText.innerText = "Applying Denoise...";
-            applyFilter(ctx, 'url(#soft-denoise)');
-        }
-
-        if(isUpscale) {
-            maskText.innerText = "AI Upscaling 2x...";
-            if(canvas.width * canvas.height > 20000000) {
-                console.log("Too big");
-            } else {
-                const upCvs = document.getElementById('cUpscale');
-                upCvs.width = canvas.width * 2; upCvs.height = canvas.height * 2;
-                const uCtx = upCvs.getContext('2d');
-                uCtx.imageSmoothingEnabled = true;
-                uCtx.imageSmoothingQuality = 'high';
-                uCtx.drawImage(canvas, 0, 0, upCvs.width, upCvs.height);
-                applyFilter(uCtx, 'url(#upscale-sharpen)');
-                canvas = upCvs;
-            }
+        if(isUpscale && canvas.width * canvas.height < 20000000) {
+            maskText.innerText = "Upscaling...";
+            const upCvs = document.getElementById('cUpscale');
+            upCvs.width = canvas.width * 2; upCvs.height = canvas.height * 2;
+            const uCtx = upCvs.getContext('2d');
+            uCtx.imageSmoothingEnabled = true;
+            uCtx.imageSmoothingQuality = 'high';
+            uCtx.drawImage(canvas, 0, 0, upCvs.width, upCvs.height);
+            applyFilter(uCtx, 'url(#upscale-sharpen)');
+            canvas = upCvs;
         }
 
         const link = document.createElement('a');
         link.download = `${prefix}_${Date.now()}.${isPng ? 'png' : 'jpg'}`;
         link.href = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.95);
         link.click();
-        
         mask.style.display = 'none';
     }
 
     async function setEV(val) { if(hardwareExposure) try{await videoTrack.applyConstraints({advanced:[{exposureCompensation:val}]})}catch(e){} }
-    
     function applyFilter(ctx, filter) {
         const t = document.createElement('canvas'); t.width=ctx.canvas.width; t.height=ctx.canvas.height;
         t.getContext('2d').drawImage(ctx.canvas,0,0);
@@ -445,7 +594,6 @@
         ctx.drawImage(t,0,0);
         ctx.filter = 'none';
     }
-
     function toggleStyle(el, labelId) { document.getElementById(labelId).classList.toggle('active', el.checked); }
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
