@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
 
-    <title>AI Pro Cam (Fixed)</title>
+    <title>AI Pro Cam (Final Fix)</title>
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         :root { --accent: #00d2ff; --warn: #ffd700; --track: #00ff00; --bg: #000; --panel: rgba(10,10,10,0.85); }
@@ -554,8 +554,12 @@
             } catch(e) {}
         }
         const c = document.createElement('canvas');
-        c.width = video.videoWidth; c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
+        // 防止寬高為 0
+        const w = video.videoWidth || 640;
+        const h = video.videoHeight || 480;
+        c.width = w; c.height = h;
+        // 加入 willReadFrequently 優化
+        c.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0, w, h);
         return c;
     }
 
@@ -629,13 +633,22 @@
                 maskSub.innerText = "AI Upscaling (2x)...";
                 const upDst = new cv.Mat();
                 cv.resize(dst, upDst, new cv.Size(0,0), 2.0, 2.0, cv.INTER_CUBIC);
+                
                 const upBlur = new cv.Mat();
                 cv.GaussianBlur(upDst, upBlur, new cv.Size(0,0), 3);
                 cv.addWeighted(upDst, 1.4, upBlur, -0.4, 0, upDst); 
-                canvas.width *= 2; canvas.height *= 2;
-                cv.imshow(canvas, upDst);
+                
+                // ★★★ 核心修復：建立全新 Canvas 用於輸出，避免原地修改導致清空 ★★★
+                const newCanvas = document.createElement('canvas');
+                newCanvas.width = dst.cols * 2;
+                newCanvas.height = dst.rows * 2;
+                cv.imshow(newCanvas, upDst);
+                canvas = newCanvas; // 替換參考
+
                 upDst.delete(); upBlur.delete();
-            } else { cv.imshow(canvas, dst); }
+            } else { 
+                cv.imshow(canvas, dst); 
+            }
 
             planes.delete(); L.delete(); 
         } catch(e) { console.error(e); } 
@@ -678,6 +691,5 @@
 </script>
 </body>
 </html>
-
 
 
