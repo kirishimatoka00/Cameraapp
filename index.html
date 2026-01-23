@@ -2,27 +2,25 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <!-- Viewport 優化：加入 viewport-fit=cover 以適配劉海屏 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
-    <!-- PWA 全螢幕設定 (iOS/Android "加入主畫面" 後生效) -->
+    <!-- PWA 全螢幕設定 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
 
-    <title>AI Pro Cam (Full Screen)</title>
+    <title>AI Pro Cam (Fixed)</title>
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         :root { --accent: #00d2ff; --warn: #ffd700; --track: #00ff00; --bg: #000; --panel: rgba(10,10,10,0.85); }
         
-        /* 鎖定滑動與選取，營造 App 質感 */
         body { 
             margin: 0; background: var(--bg); 
             font-family: -apple-system, Roboto, monospace; color: white; 
             height: 100dvh; display: flex; flex-direction: column; overflow: hidden; 
             user-select: none; -webkit-user-select: none; 
-            overscroll-behavior: none; /* 防止下拉刷新 */
+            overscroll-behavior: none;
         }
         
         /* --- 頂部控制列 --- */
@@ -30,18 +28,14 @@
             background: linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0)); 
             padding: 8px 12px; z-index: 20; position: absolute; top: 0; left: 0; right: 0;
             display: flex; flex-direction: column; gap: 10px;
-            /* 避開劉海區 */
             padding-top: max(10px, env(safe-area-inset-top));
-            pointer-events: none; /* 讓點擊穿透到畫面，按鈕另外開啟 */
+            pointer-events: none;
         }
-        
-        /* 讓內部元素可以被點擊 */
         .top-bar > * { pointer-events: auto; }
 
         .row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; }
         .row.scroll-x { overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
         
-        /* 視覺化鏡頭選擇列 */
         .cam-bar-container {
             display: flex; align-items: center; gap: 8px; overflow-x: auto;
             flex-grow: 1; scrollbar-width: none; padding-right: 10px;
@@ -58,14 +52,12 @@
         }
         .cam-pill.warn.active { background: var(--warn); color: #000; }
         
-        /* 全螢幕按鈕 */
         .fs-btn {
             width: 30px; height: 30px; border-radius: 50%; background: rgba(50,50,50,0.6);
             border: 1px solid #555; color: #fff; display: flex; justify-content: center; align-items: center;
             font-size: 14px; cursor: pointer; flex-shrink: 0; backdrop-filter: blur(4px);
         }
 
-        /* 功能按鈕 */
         .toggle-btn {
             background: rgba(30,30,30,0.8); border: 1px solid #444; color: #888; 
             padding: 4px 8px; border-radius: 12px; font-size: 11px; cursor: pointer; 
@@ -77,21 +69,17 @@
         .toggle-btn.hdr-active { border-color: var(--warn); color: var(--warn); background: rgba(255, 215, 0, 0.15); }
         .toggle-btn.up-active { border-color: #ff00ff; color: #ff00ff; background: rgba(255, 0, 255, 0.15); }
 
-        /* 燈光控制 */
         .light-group { display: flex; background: rgba(30,30,30,0.8); border-radius: 8px; border: 1px solid #444; padding: 2px; backdrop-filter: blur(4px); }
         .light-btn { padding: 4px 8px; font-size: 12px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #888; }
         .light-btn.active { background: var(--warn); color: #000; font-weight: bold; }
 
-        /* --- 視窗區域 --- */
         .viewport { 
             position: absolute; inset: 0; background: #000; overflow: hidden;
             display: flex; justify-content: center; align-items: center; 
             touch-action: none; z-index: 1;
         }
         video { width: 100%; height: 100%; object-fit: contain; }
-        /* 如果希望畫面填滿不留黑邊 (可能會裁切)，可改為 object-fit: cover */
 
-        /* UI Elements */
         #focus-reticle {
             position: absolute; width: 60px; height: 60px;
             border: 2px solid #fff; border-radius: 8px;
@@ -114,14 +102,13 @@
         }
 
         #info-pill {
-            position: absolute; top: 15px; left: 15px; /* JS 會動態調整這個位置避開劉海 */
+            position: absolute; top: 15px; left: 15px;
             background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px;
             font-size: 10px; color: #fff; border: 1px solid rgba(255,255,255,0.2); pointer-events: none; z-index: 10;
             backdrop-filter: blur(4px); margin-top: max(0px, env(safe-area-inset-top));
         }
         .warn-mode { color: var(--warn) !important; border-color: var(--warn) !important; }
 
-        /* HUD */
         #mask {
             position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
             display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
@@ -134,12 +121,10 @@
         .mask-text { font-size: 14px; color: var(--accent); letter-spacing: 1px; }
         .mask-sub { font-size: 11px; color: #666; margin-top: -10px; }
 
-        /* --- 底部控制區 --- */
         .controls { 
             position: absolute; bottom: 0; left: 0; right: 0;
             background: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 80%, rgba(0,0,0,0) 100%);
             padding: 20px 15px; z-index: 20; display: grid; grid-template-columns: 1fr 70px; gap: 12px;
-            /* 避開底部 Home Bar */
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
@@ -179,16 +164,13 @@
 <body>
 
     <div class="top-bar">
-        <!-- 第一行: 鏡頭列 + 全螢幕按鈕 -->
         <div class="row">
             <div id="cam-pill-bar" class="cam-bar-container">
                 <div class="cam-pill">Init...</div>
             </div>
-            <!-- 全螢幕按鈕 -->
             <button class="fs-btn" onclick="toggleFullScreen()">⛶</button>
         </div>
         
-        <!-- 第二行: 功能開關 -->
         <div class="row scroll-x" style="margin-top: 5px;">
             <div class="light-group">
                 <button class="light-btn active" id="light-off" onclick="setLightMode('off')">🚫</button>
@@ -216,16 +198,11 @@
         </div>
     </div>
 
-    <!-- 視窗 -->
     <div class="viewport" id="viewport">
         <video id="videoPreview" autoplay playsinline muted></video>
         <div id="info-pill">Ready</div>
-        
-        <!-- UI Elements -->
         <div id="focus-reticle"></div>
         <div id="tracker-box"></div>
-
-        <!-- Loading HUD -->
         <div id="mask">
             <div class="spinner"></div>
             <div class="mask-text" id="mask-main">Processing...</div>
@@ -233,7 +210,6 @@
         </div>
     </div>
 
-    <!-- 底部控制 (半透明浮動) -->
     <div class="controls">
         <div class="sliders-col">
             <div class="slider-row ac-iso">
@@ -262,7 +238,6 @@
                 <span id="zoomText" class="value-disp">1x</span>
             </div>
         </div>
-
         <div class="shutter-col">
             <div class="shutter" onclick="executeCapture()"></div>
         </div>
@@ -295,7 +270,6 @@
         console.log('OpenCV Loaded');
     }
 
-    // ★★★ 全螢幕切換邏輯 ★★★
     function toggleFullScreen() {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             if (document.documentElement.requestFullscreen) {
@@ -303,15 +277,11 @@
             } else if (document.documentElement.webkitRequestFullscreen) {
                 document.documentElement.webkitRequestFullscreen();
             } else {
-                // iOS Safari 不支援 API 觸發的全螢幕，只能透過 "加入主畫面"
-                alert("iOS 使用者：請點擊分享按鈕，選擇「加入主畫面」以獲得最佳全螢幕體驗。");
+                alert("iOS 使用者：請使用「加入主畫面」功能以獲得最佳體驗。");
             }
         } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            }
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
         }
     }
 
@@ -319,21 +289,15 @@
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
-            
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cams = devices.filter(d => d.kind === 'videoinput');
-            
             renderCamPills(cams);
-
             if(cams.length > 0) {
                 let defaultIdx = cams.length - 1; 
                 switchCamera(cams[defaultIdx].deviceId, defaultIdx);
             }
             viewport.addEventListener('click', triggerTapFocus);
-        } catch(e) { 
-            console.error(e);
-            alert("請允許相機權限"); 
-        }
+        } catch(e) { console.error(e); alert("請允許相機權限"); }
     }
 
     function renderCamPills(cams) {
@@ -342,28 +306,22 @@
             const btn = document.createElement('div');
             btn.className = 'cam-pill';
             btn.dataset.id = d.deviceId;
-            
             let label = d.label.toLowerCase();
             let name = `鏡頭 ${i+1}`;
-            
             if (label.includes('front') || label.includes('前')) {
                 name = '前鏡頭';
             } else if (label.includes('back') || label.includes('rear') || label.includes('後')) {
                 if (i === 2 && cams.length >= 3) {
                     name = '廣角 (0.5x)';
                     btn.classList.add('warn');
-                } else if (i === 0) {
-                    name = '主鏡 (1x)';
-                } else {
-                    name = `後置 ${i+1}`;
-                }
+                } else if (i === 0) name = '主鏡 (1x)';
+                else name = `後置 ${i+1}`;
             } else {
                 if (i === 2 && cams.length >= 3) {
                     name = '廣角 (0.5x)';
                     btn.classList.add('warn');
                 }
             }
-
             btn.innerText = name;
             btn.onclick = () => switchCamera(d.deviceId, i);
             camBar.appendChild(btn);
@@ -433,7 +391,6 @@
             zSlider.max = Math.min(caps.zoom.max, 8);
             zSlider.value = 1;
         }
-
         const isoSlider = document.getElementById('isoSlider');
         if(hardwareParams.iso) {
             isoSlider.min = caps.iso.min;
@@ -489,7 +446,7 @@
                 videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
                 slider.disabled = false;
             } else { startTracking(); }
-        } else if (focusModeState === 'mf') { startTracking(); } 
+        } else if (focusModeState === 'mf') startTracking();
         else {
             stopTracking();
             focusModeState = 'af';
@@ -585,7 +542,8 @@
     }
 
     async function grabHighQuality() {
-        if(imageCapture) {
+        // ★★★ 修正關鍵：Safe Mode (廣角) 時強制不使用 imageCapture ★★★
+        if(imageCapture && !isSafeMode) {
             try {
                 const blob = await imageCapture.takePhoto();
                 const bmp = await createImageBitmap(blob);
@@ -720,5 +678,6 @@
 </script>
 </body>
 </html>
+
 
 
