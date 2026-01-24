@@ -5,108 +5,177 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
-    <title>AI Ultimate Pro</title>
+    <title>AI Pro Cam (Ultra Res)</title>
 
     <!-- 核心庫 -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
-    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
 
     <style>
-        :root { --accent: #00d2ff; --warn: #ffd700; --track: #00ff00; --bg: #000; }
-        body { margin: 0; background: var(--bg); font-family: sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; user-select: none; }
+        :root { --accent: #00d2ff; --warn: #ffd700; --track: #00ff00; --bg: #000; --ultra: #ff00ff; }
         
+        body { 
+            margin: 0; background: var(--bg); font-family: -apple-system, system-ui, sans-serif; 
+            color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; 
+            user-select: none; -webkit-user-select: none; 
+        }
+        
+        /* 頂部 */
         .top-bar { 
             position: absolute; top: 0; left: 0; right: 0; z-index: 20;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
             padding: 10px; padding-top: max(10px, env(safe-area-inset-top));
             display: flex; flex-direction: column; gap: 8px; pointer-events: none;
         }
         .top-bar > * { pointer-events: auto; }
-        
+
         .row { display: flex; justify-content: space-between; align-items: center; }
         .scroll-x { overflow-x: auto; padding-bottom: 5px; display: flex; gap: 8px; scrollbar-width: none; }
 
+        /* 鏡頭按鈕 */
         .cam-pill {
-            background: rgba(50,50,50,0.8); padding: 4px 10px; border-radius: 15px; 
-            font-size: 11px; border: 1px solid #555; color: #ccc; white-space: nowrap;
+            background: rgba(40,40,40,0.9); padding: 6px 12px; border-radius: 20px; 
+            font-size: 12px; border: 1px solid #555; color: #ccc; white-space: nowrap; transition: 0.2s;
         }
-        .cam-pill.active { background: #fff; color: #000; border-color: #fff; }
+        .cam-pill.active { background: #fff; color: #000; border-color: #fff; font-weight: bold; }
+        .cam-pill.warn { border-color: var(--warn); color: var(--warn); }
+        .cam-pill.warn.active { background: var(--warn); color: #000; }
 
+        /* 功能按鈕 */
         .tool-btn {
-            background: rgba(50,50,50,0.8); border: 1px solid #555; color: #ccc;
-            padding: 4px 8px; border-radius: 8px; font-size: 11px; display: flex; align-items: center; gap: 4px; white-space: nowrap;
+            background: rgba(40,40,40,0.8); border: 1px solid #555; color: #ccc;
+            padding: 5px 10px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; gap: 5px; white-space: nowrap; backdrop-filter: blur(4px);
         }
-        .tool-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.15); }
+        .tool-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.15); font-weight: bold; }
+        .tool-btn.hdr-active { border-color: var(--warn); color: var(--warn); background: rgba(255, 215, 0, 0.15); }
+        .tool-btn.gesture-active { border-color: var(--warn); color: var(--warn); background: rgba(255, 215, 0, 0.15); }
+        
+        /* Ultra 模式按鈕 */
+        .tool-btn.ultra-active { 
+            border-color: var(--ultra); color: var(--ultra); background: rgba(255, 0, 255, 0.15); 
+            font-weight: bold; text-shadow: 0 0 5px rgba(255,0,255,0.5);
+        }
+
+        .fs-btn {
+            width: 32px; height: 32px; border-radius: 50%; background: rgba(50,50,50,0.8);
+            border: 1px solid #666; color: #fff; display: flex; justify-content: center; align-items: center;
+            font-size: 16px; cursor: pointer; backdrop-filter: blur(4px);
+        }
+
+        .light-group { display: flex; background: rgba(40,40,40,0.9); border-radius: 8px; border: 1px solid #555; padding: 2px; }
+        .light-btn { padding: 5px 10px; font-size: 14px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #888; }
+        .light-btn.active { background: var(--warn); color: #000; font-weight: bold; }
 
         .viewport { 
             position: relative; flex-grow: 1; background: #000; 
             display: flex; justify-content: center; align-items: center; overflow: hidden;
         }
         video { width: 100%; height: 100%; object-fit: contain; }
-        canvas.overlay { position: absolute; top:0; left:0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+        canvas.overlay { position: absolute; top:0; left:0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; z-index: 10; }
 
         #mask {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.8); z-index: 50;
+            position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
             display: none; justify-content: center; align-items: center; flex-direction: column;
         }
         .spinner {
-            width: 30px; height: 30px; border: 3px solid #333; border-top: 3px solid var(--accent); 
-            border-radius: 50%; animation: spin 1s infinite linear; margin-bottom: 10px;
+            width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid var(--accent); 
+            border-radius: 50%; animation: spin 0.8s infinite linear; margin-bottom: 15px;
         }
         @keyframes spin { 100% { transform: rotate(360deg); } }
 
         .controls { 
-            background: linear-gradient(to top, black, transparent); 
-            padding: 20px; padding-bottom: max(20px, env(safe-area-inset-bottom));
-            display: flex; flex-direction: column; gap: 15px; z-index: 20;
+            background: linear-gradient(to top, #000 0%, rgba(0,0,0,0.8) 80%, transparent 100%); 
+            padding: 15px; padding-bottom: max(20px, env(safe-area-inset-bottom));
+            display: flex; flex-direction: column; gap: 10px; z-index: 20;
         }
 
         .mode-ribbon {
-            display: flex; gap: 25px; overflow-x: auto; padding: 5px 35%;
-            scrollbar-width: none;
+            display: flex; gap: 30px; overflow-x: auto; padding: 10px 35%; justify-content: center;
+            scrollbar-width: none; margin-bottom: 5px;
         }
         .mode-item {
-            font-size: 13px; font-weight: bold; color: #666; white-space: nowrap; 
-            text-transform: uppercase; transition: 0.2s;
+            font-size: 14px; font-weight: 600; color: #666; white-space: nowrap; 
+            text-transform: uppercase; transition: 0.2s; letter-spacing: 1px;
         }
-        .mode-item.active { color: var(--warn); transform: scale(1.1); text-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+        .mode-item.active { color: var(--warn); transform: scale(1.15); text-shadow: 0 0 10px rgba(255, 215, 0, 0.4); }
 
-        .shutter-area { display: flex; justify-content: center; align-items: center; position: relative; }
+        .sliders-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+        .slider-row { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: bold; color: #aaa; }
+        .label { width: 40px; text-align: right; }
+        input[type=range] { flex-grow: 1; accent-color: var(--accent); height: 4px; }
+        
+        .shutter-area { display: flex; justify-content: center; align-items: center; margin-top: 5px; }
         .shutter {
-            width: 70px; height: 70px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.4);
-            background: white; cursor: pointer; transition: 0.1s;
+            width: 72px; height: 72px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.4);
+            background: white; cursor: pointer; transition: 0.1s; box-shadow: 0 0 15px rgba(255,255,255,0.2);
         }
-        .shutter:active { transform: scale(0.9); }
+        .shutter:active { transform: scale(0.92); }
 
-        /* 掃描與識別框樣式 */
-        .scan-rect { stroke: #00ff00; stroke-width: 3; fill: rgba(0,255,0,0.1); }
-        .detect-rect { stroke: #00ffff; stroke-width: 2; }
-        .detect-label { fill: #00ffff; font-size: 14px; font-weight: bold; }
+        #info-pill {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px;
+            font-size: 10px; color: #fff; pointer-events: none; z-index: 10;
+            backdrop-filter: blur(4px); margin-top: max(0px, env(safe-area-inset-top));
+        }
+        .warn-mode { color: var(--warn) !important; border-color: var(--warn) !important; }
+
+        #focus-reticle {
+            position: absolute; width: 60px; height: 60px; border: 2px solid #fff; border-radius: 8px;
+            display: none; pointer-events: none; z-index: 30; transform: translate(-50%, -50%);
+        }
+        #focus-reticle.focusing { animation: focus-anim 0.5s ease-out forwards; }
+        @keyframes focus-anim { 0% { width:80px; height:80px; opacity:1; } 100% { width:60px; height:60px; border-color:#0f0; opacity:0; } }
+
+        .af-btn {
+            background: rgba(50,50,50,0.8); color: #fff; border: 1px solid #666; padding: 2px 4px; border-radius: 4px; font-size: 10px; cursor: pointer; width: 35px; text-align: center;
+        }
+        .af-btn.manual { background: var(--warn); color: #000; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="top-bar">
         <div class="row">
-            <div id="camList" class="scroll-x"></div>
-            <div class="tool-btn" id="gestureBtn" onclick="toggleGesture()">✋ 手勢</div>
+            <div id="camList" class="scroll-x" style="flex-grow:1; margin-right:10px;"></div>
+            <div style="display:flex; gap:8px;">
+                <div class="tool-btn" id="gestureBtn" onclick="toggleGesture()">✋</div>
+                <div class="fs-btn" onclick="toggleFullScreen()">⛶</div>
+            </div>
         </div>
-        <div class="row scroll-x" style="margin-top:5px;">
-             <div class="tool-btn active" id="claheBtn">通透</div>
-             <div class="tool-btn active" id="denoiseBtn">降噪</div>
-             <div class="tool-btn" id="upscaleBtn">2x AI</div>
+        
+        <div class="row scroll-x" style="margin-top:8px;">
+             <!-- 閃光燈 -->
+             <div class="light-group">
+                <button class="light-btn active" id="light-off" onclick="setLightMode('off')">🚫</button>
+                <button class="light-btn" id="light-flash" onclick="setLightMode('flash')">⚡</button>
+                <button class="light-btn" id="light-torch" onclick="setLightMode('torch')">🔦</button>
+             </div>
+             
+             <div style="width:1px; height:20px; background:#555; margin:0 5px;"></div>
+
+             <!-- Pro 功能 -->
+             <select id="hdrCount" style="background:#333; color:#fff; border:none; border-radius:4px; font-size:11px;">
+                 <option value="3">3x</option><option value="5">5x</option>
+             </select>
+             <div class="tool-btn" id="hdrBtn" onclick="toggleFeature('hdr')">HDR</div>
+             <!-- 畫質增強按鈕：Off -> 2x -> Ultra -->
+             <div class="tool-btn" id="upscaleBtn" onclick="cycleUpscale()">AI 關</div>
+             
+             <div class="tool-btn active" id="claheBtn" onclick="toggleFeature('clahe')">通透</div>
+             <div class="tool-btn active" id="denoiseBtn" onclick="toggleFeature('denoise')">降噪</div>
         </div>
     </div>
 
-    <div class="viewport">
+    <div class="viewport" id="viewport">
         <video id="video" autoplay playsinline muted></video>
         <canvas id="cOverlay" class="overlay"></canvas>
+        <div id="info-pill">Initializing...</div>
+        <div id="focus-reticle"></div>
+        
         <div id="mask">
             <div class="spinner"></div>
-            <div id="maskText" style="color:#fff; font-size:14px;">Loading...</div>
+            <div id="maskText" style="color:#fff; font-size:16px; font-weight:bold; letter-spacing:1px;">Processing...</div>
+            <div id="maskSub" style="color:#aaa; font-size:12px; margin-top:5px;"></div>
         </div>
     </div>
 
@@ -114,11 +183,38 @@
         <div class="mode-ribbon">
             <div class="mode-item active" onclick="setMode('PRO')">PRO</div>
             <div class="mode-item" onclick="setMode('SCAN')">掃描</div>
-            <div class="mode-item" onclick="setMode('DETECT')">識別</div>
-            <div class="mode-item" onclick="setMode('OCR')">翻譯</div>
         </div>
+
+        <div class="sliders-container" id="proPanel">
+            <div class="slider-row">
+                <span class="label">ISO</span>
+                <input type="range" id="isoSlider" min="100" max="3200" step="100" value="100" oninput="updateHW('iso', this.value)">
+                <span id="isoVal" style="width:30px; text-align:right">A</span>
+            </div>
+            <div class="slider-row">
+                <span class="label">EV</span>
+                <input type="range" id="evSlider" min="-3" max="3" step="0.5" value="0" oninput="updateHW('ev', this.value)">
+                <span id="evVal" style="width:30px; text-align:right">0</span>
+            </div>
+            <div class="slider-row">
+                <span class="label">Zoom</span>
+                <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" oninput="updateHW('zoom', this.value)">
+                <span id="zoomVal" style="width:30px; text-align:right">1x</span>
+            </div>
+            <div class="slider-row">
+                <span class="label">Focus</span>
+                <input type="range" id="focusSlider" min="0" max="100" step="1" value="0" disabled oninput="updateHW('focus', this.value)">
+                <div id="afBtn" class="af-btn" onclick="toggleFocusMode()">AF</div>
+            </div>
+            <div class="slider-row">
+                <span class="label">銳化</span>
+                <input type="range" id="sharpSlider" min="0" max="100" value="50">
+                <span id="sharpVal" style="width:30px; text-align:right">50</span>
+            </div>
+        </div>
+
         <div class="shutter-area">
-            <div class="shutter" onclick="capture()"></div>
+            <div class="shutter" onclick="captureAction()"></div>
         </div>
     </div>
 
@@ -128,285 +224,270 @@
     const ctxOverlay = cOverlay.getContext('2d');
     const mask = document.getElementById('mask');
     const maskText = document.getElementById('maskText');
+    const maskSub = document.getElementById('maskSub');
+    const infoPill = document.getElementById('info-pill');
     
     let stream, videoTrack, imageCapture;
     let currentMode = 'PRO';
     let isOpenCvReady = false;
-    let isProcessing = false;
+    
+    // 狀態
+    let features = { hdr: false, upscaleMode: 0, clahe: true, denoise: true }; // 0:Off, 1:2x, 2:Ultra
+    let hwParams = { iso: false, zoom: false, torch: false, exp: false, focus: false };
+    let lightMode = 'off';
+    let isManualFocus = false;
+    let isSafeMode = false;
 
-    // AI Models
-    let models = { coco: null, gesture: null };
+    // AI
+    let models = { gesture: null };
     let isGestureEnabled = false;
     let lastGestureTime = 0;
+    let scanContour = null; 
 
-    // Scan Variables
-    let scanContour = null; // 存儲偵測到的文件輪廓
-
-    function onOpenCvReady() { 
-        isOpenCvReady = true; 
-        console.log("OpenCV Ready");
-    }
+    function onOpenCvReady() { isOpenCvReady = true; console.log("OpenCV Ready"); }
 
     async function init() {
         try {
             stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720} } 
             });
-            video.srcObject = stream;
-            videoTrack = stream.getVideoTracks()[0];
+            setupStream(stream);
             
-            try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
-
-            // Render Cameras
             const devs = await navigator.mediaDevices.enumerateDevices();
             const cams = devs.filter(d => d.kind === 'videoinput');
             const camList = document.getElementById('camList');
             camList.innerHTML = '';
+            
             cams.forEach((c, i) => {
                 const d = document.createElement('div');
                 d.className = 'cam-pill';
-                d.innerText = c.label.includes('front') ? '前鏡' : `鏡頭 ${i+1}`;
-                d.onclick = () => switchCam(c.deviceId);
+                let label = c.label.toLowerCase();
+                let name = `鏡頭 ${i+1}`;
+                let isWide = false;
+                
+                if (label.includes('front')) name = '前鏡';
+                else if (i === 0) name = '主鏡';
+                else if (i === 2 && cams.length > 2) { 
+                    name = '廣角 0.5x'; 
+                    isWide = true; 
+                    d.classList.add('warn'); 
+                } 
+                else if (i === 3) name = '1 X';
+                
+                d.innerText = name;
+                d.onclick = () => switchCam(c.deviceId, isWide);
                 camList.appendChild(d);
             });
+            
+            document.getElementById('viewport').addEventListener('click', triggerTapFocus);
+            requestAnimationFrame(renderLoop);
 
-            video.onloadedmetadata = () => {
-                cOverlay.width = video.videoWidth;
-                cOverlay.height = video.videoHeight;
-                requestAnimationFrame(renderLoop);
-            };
-
-        } catch(e) { alert("Camera Error: " + e.message); }
+        } catch(e) { alert("Camera Init Failed: " + e.message); }
     }
 
-    async function switchCam(id) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: {exact: id}, width: {ideal: 1280} } });
-        video.srcObject = stream;
-        videoTrack = stream.getVideoTracks()[0];
+    function setupStream(s) {
+        video.srcObject = s;
+        videoTrack = s.getVideoTracks()[0];
         try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
+        
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        hwParams.iso = !!caps.iso;
+        hwParams.zoom = !!caps.zoom;
+        hwParams.torch = !!caps.torch;
+        hwParams.exp = !!caps.exposureCompensation;
+        hwParams.focus = caps.focusMode && caps.focusMode.includes('manual');
+
+        const zs = document.getElementById('zoomSlider');
+        if(hwParams.zoom) { zs.disabled = false; zs.min = caps.zoom.min; zs.max = caps.zoom.max; } else zs.disabled = true;
+        
+        const is = document.getElementById('isoSlider');
+        if(hwParams.iso) { is.disabled = false; is.min = caps.iso.min; is.max = caps.iso.max; } else is.disabled = true;
+
+        video.onloadedmetadata = () => {
+            cOverlay.width = video.videoWidth;
+            cOverlay.height = video.videoHeight;
+            infoPill.innerText = `${video.videoWidth}x${video.videoHeight} ${isSafeMode?'(Safe)':''}`;
+        };
     }
 
-    // --- 模式切換 ---
-    window.setMode = async function(mode) {
-        if(currentMode === mode) return;
-        currentMode = mode;
+    async function switchCam(id, isWide) {
+        if(stream) stream.getTracks().forEach(t => t.stop());
+        isSafeMode = isWide;
         
-        document.querySelectorAll('.mode-item').forEach(el => 
-            el.classList.toggle('active', el.innerText === getModeName(mode)));
+        let constraints = isWide ? 
+            { video: { deviceId: {exact: id}, width: {ideal: 640}, height: {ideal: 480} } } :
+            { video: { deviceId: {exact: id}, width: {ideal: 3840}, height: {ideal: 2160} } };
 
-        // 識別模式：預載入模型
-        if(mode === 'DETECT' && !models.coco) {
-            showMask("載入識別模型...");
-            try {
-                models.coco = await cocoSsd.load();
-            } catch(e) { alert("模型載入失敗"); setMode('PRO'); }
-            hideMask();
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch(e) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: {exact: id} } });
+        }
+        setupStream(stream);
+    }
+
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(e=>{alert("iOS 請用加入主畫面")});
+        else document.exitFullscreen();
+    }
+
+    async function setLightMode(mode) {
+        lightMode = mode;
+        document.querySelectorAll('.light-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`light-${mode}`).classList.add('active');
+        
+        if(videoTrack && hwParams.torch) {
+            await videoTrack.applyConstraints({ advanced: [{ torch: mode === 'torch' }] }).catch(()=>{});
         }
     }
 
-    function getModeName(m) {
-        return { 'PRO':'PRO', 'SCAN':'掃描', 'DETECT':'識別', 'OCR':'翻譯' }[m] || m;
+    function updateHW(type, val) {
+        if(!videoTrack) return;
+        let constraints = { advanced: [] };
+        if(type === 'zoom') {
+            document.getElementById('zoomVal').innerText = parseFloat(val).toFixed(1) + 'x';
+            constraints.advanced.push({ zoom: parseFloat(val) });
+        } else if (type === 'iso') {
+            document.getElementById('isoVal').innerText = val;
+            constraints.advanced.push({ iso: parseInt(val) });
+        } else if (type === 'ev') {
+            document.getElementById('evVal').innerText = val;
+            constraints.advanced.push({ exposureCompensation: parseFloat(val) });
+        } else if (type === 'focus' && isManualFocus) {
+            constraints.advanced.push({ focusMode: 'manual', focusDistance: val/100 });
+        }
+        videoTrack.applyConstraints(constraints).catch(e=>{});
+        
+        if(type === 'sharp') document.getElementById('sharpVal').innerText = val;
     }
 
-    // --- 主渲染迴圈 (AI 預覽) ---
+    async function triggerTapFocus(e) {
+        if(isManualFocus || !videoTrack) return;
+        const rect = video.getBoundingClientRect();
+        const reticle = document.getElementById('focus-reticle');
+        reticle.style.left = `${e.clientX}px`;
+        reticle.style.top = `${e.clientY}px`;
+        reticle.style.display = 'block';
+        reticle.classList.remove('focusing');
+        void reticle.offsetWidth;
+        reticle.classList.add('focusing');
+        try { await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e){}
+    }
+
+    function toggleFocusMode() {
+        if(!hwParams.focus) return;
+        isManualFocus = !isManualFocus;
+        const btn = document.getElementById('afBtn');
+        const slider = document.getElementById('focusSlider');
+        if(isManualFocus) {
+            btn.innerText = "MF"; btn.classList.add('manual');
+            slider.disabled = false;
+        } else {
+            btn.innerText = "AF"; btn.classList.remove('manual');
+            slider.disabled = true;
+            videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(()=>{});
+        }
+    }
+
+    function toggleFeature(feat) {
+        features[feat] = !features[feat];
+        const btn = document.getElementById(`${feat}Btn`);
+        if (feat === 'hdr') btn.classList.toggle('hdr-active', features[feat]);
+        else btn.classList.toggle('active', features[feat]);
+    }
+
+    // ★★★ 畫質增強循環切換: 關 -> 2x -> Ultra ★★★
+    function cycleUpscale() {
+        const btn = document.getElementById('upscaleBtn');
+        features.upscaleMode = (features.upscaleMode + 1) % 3;
+        
+        if (features.upscaleMode === 0) {
+            btn.innerText = "AI 關";
+            btn.classList.remove('active', 'ultra-active');
+        } else if (features.upscaleMode === 1) {
+            btn.innerText = "2x AI";
+            btn.classList.add('active');
+            btn.classList.remove('ultra-active');
+        } else {
+            btn.innerText = "Ultra";
+            btn.classList.remove('active');
+            btn.classList.add('ultra-active');
+        }
+    }
+
+    async function setMode(mode) {
+        if(currentMode === mode) return;
+        currentMode = mode;
+        document.querySelectorAll('.mode-item').forEach(el => 
+            el.classList.toggle('active', el.innerText === { 'PRO':'PRO', 'SCAN':'掃描' }[mode]));
+        document.getElementById('proPanel').style.display = (mode === 'PRO') ? 'flex' : 'none';
+    }
+
     async function renderLoop() {
         if(video.readyState === 4) {
             ctxOverlay.clearRect(0, 0, cOverlay.width, cOverlay.height);
-
-            // 1. 手勢快門
             if(isGestureEnabled) await runGesture();
-
-            // 2. 識別模式
-            if(currentMode === 'DETECT' && models.coco) {
-                const preds = await models.coco.detect(video);
-                preds.forEach(p => {
-                    const [x, y, w, h] = p.bbox;
-                    ctxOverlay.strokeStyle = '#00ffff';
-                    ctxOverlay.lineWidth = 2;
-                    ctxOverlay.strokeRect(x, y, w, h);
-                    ctxOverlay.fillStyle = '#00ffff';
-                    ctxOverlay.font = '16px sans-serif';
-                    ctxOverlay.fillText(`${p.class} ${Math.round(p.score*100)}%`, x, y > 10 ? y-5 : y+15);
-                });
-            }
-
-            // 3. 掃描模式 (OpenCV 邊緣偵測)
-            if(currentMode === 'SCAN' && isOpenCvReady) {
-                processScanPreview();
-            }
+            if (currentMode === 'SCAN' && isOpenCvReady) runScanPreview();
         }
         requestAnimationFrame(renderLoop);
     }
 
-    // --- 功能：掃描預覽 (OpenCV) ---
-    function processScanPreview() {
+    function runScanPreview() {
         try {
-            // 為了效能，縮小處理
             let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             let cap = new cv.VideoCapture(video);
             cap.read(src);
-            
             let gray = new cv.Mat();
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
             cv.Canny(gray, gray, 75, 200);
-
             let contours = new cv.MatVector();
             let hierarchy = new cv.Mat();
             cv.findContours(gray, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-            let maxArea = 0;
-            let bestCnt = null;
-
+            let maxArea = 0; let bestCnt = null;
             for(let i=0; i<contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
                 if(area > 5000) {
-                    let peri = cv.arcLength(cnt, true);
                     let approx = new cv.Mat();
-                    cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+                    cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
                     if(approx.rows === 4 && area > maxArea) {
-                        maxArea = area;
-                        if(bestCnt) bestCnt.delete();
-                        bestCnt = approx; // 暫存但不 delete，直到迴圈結束
-                    } else {
-                        approx.delete();
-                    }
+                        maxArea = area; if(bestCnt) bestCnt.delete(); bestCnt = approx;
+                    } else approx.delete();
                 }
             }
-            
-            // 繪製結果
             if(bestCnt) {
-                ctxOverlay.strokeStyle = '#00ff00';
-                ctxOverlay.lineWidth = 4;
-                ctxOverlay.beginPath();
-                // 讀取四個點
+                ctxOverlay.strokeStyle = '#00ff00'; ctxOverlay.lineWidth = 5; ctxOverlay.beginPath();
                 let pts = [];
-                for(let i=0; i<4; i++) {
-                    pts.push({x: bestCnt.data32S[i*2], y: bestCnt.data32S[i*2+1]});
-                }
+                for(let i=0; i<4; i++) pts.push({x: bestCnt.data32S[i*2], y: bestCnt.data32S[i*2+1]});
                 ctxOverlay.moveTo(pts[0].x, pts[0].y);
                 for(let i=1; i<4; i++) ctxOverlay.lineTo(pts[i].x, pts[i].y);
-                ctxOverlay.closePath();
-                ctxOverlay.stroke();
-                
-                // 存到全域變數供拍照用 (這裡簡化，僅存最後一幀)
-                scanContour = pts; 
-                bestCnt.delete();
-            } else {
-                scanContour = null;
-            }
-
+                ctxOverlay.closePath(); ctxOverlay.stroke();
+                scanContour = pts; bestCnt.delete();
+            } else scanContour = null;
             src.delete(); gray.delete(); contours.delete(); hierarchy.delete();
-        } catch(e) {
-            // 避免 OpenCV 報錯卡死迴圈
-            // console.log(e);
-        }
+        } catch(e) {}
     }
 
-    // --- 功能：拍照與執行 ---
-    async function capture() {
-        showMask("處理中...");
-        
-        try {
-            // 取得高畫質影像
-            let canvas = await grabFrame();
-            
-            if(currentMode === 'OCR') {
-                await doOCR(canvas);
-            } else if (currentMode === 'SCAN') {
-                await doScanCrop(canvas);
-            } else {
-                // PRO & DETECT: 存圖 (含 2x AI 邏輯)
-                // 若要實作 AI 放大與降噪，可在此呼叫之前版本的 processImageCv
-                // 這裡簡化直接輸出
-                saveImage(canvas, currentMode);
-            }
-        } catch(e) { alert("Error: " + e.message); }
-        
-        hideMask();
-    }
-
-    // --- 功能：OCR ---
-    async function doOCR(canvas) {
-        maskText.innerText = "識別文字中...";
-        const res = await Tesseract.recognize(canvas, 'eng+chi_tra', {
-            logger: m => { if(m.status === 'recognizing text') maskText.innerText = `OCR: ${(m.progress*100).toFixed(0)}%`; }
-        });
-        
-        const text = res.data.text;
-        if(text.trim()) {
-            if(confirm(`識別結果:\n${text.substring(0, 50)}...\n\n前往 Google 翻譯?`)) {
-                window.open(`https://translate.google.com/?text=${encodeURIComponent(text)}`, '_blank');
-            }
-        } else {
-            alert("未偵測到文字");
-        }
-    }
-
-    // --- 功能：掃描裁切 (Perspective Transform) ---
-    async function doScanCrop(canvas) {
-        if(!scanContour || typeof cv === 'undefined') {
-            alert("未偵測到文件，請對準文件邊緣");
-            return;
-        }
-
-        // OpenCV 透視變換
-        let src = cv.imread(canvas);
-        let dst = new cv.Mat();
-        
-        // 來源點 (需要排序：左上, 右上, 右下, 左下) - 這裡做簡易排序
-        // 實際應用需更嚴謹的幾何排序
-        let pts = scanContour.sort((a,b) => a.y - b.y); // 先分上下
-        let top = pts.slice(0, 2).sort((a,b) => a.x - b.x); // 上排分左右
-        let bottom = pts.slice(2, 4).sort((a,b) => a.x - b.x); // 下排分左右
-        let sortedPts = [top[0], top[1], bottom[1], bottom[0]]; // TL, TR, BR, BL
-
-        // 目標尺寸 (A4比例 或 自動計算)
-        let width = Math.max(
-            Math.hypot(sortedPts[1].x - sortedPts[0].x, sortedPts[1].y - sortedPts[0].y),
-            Math.hypot(sortedPts[2].x - sortedPts[3].x, sortedPts[2].y - sortedPts[3].y)
-        );
-        let height = Math.max(
-            Math.hypot(sortedPts[3].x - sortedPts[0].x, sortedPts[3].y - sortedPts[0].y),
-            Math.hypot(sortedPts[2].x - sortedPts[1].x, sortedPts[2].y - sortedPts[1].y)
-        );
-
-        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-            sortedPts[0].x, sortedPts[0].y, sortedPts[1].x, sortedPts[1].y,
-            sortedPts[2].x, sortedPts[2].y, sortedPts[3].x, sortedPts[3].y
-        ]);
-        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, width, 0, width, height, 0, height]);
-        
-        let M = cv.getPerspectiveTransform(srcTri, dstTri);
-        cv.warpPerspective(src, dst, M, new cv.Size(width, height));
-        
-        // 增強對比 (文件模式)
-        cv.cvtColor(dst, dst, cv.COLOR_RGBA2GRAY);
-        cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
-        
-        cv.imshow(canvas, dst); // 寫回 Canvas
-        saveImage(canvas, "Scan");
-
-        src.delete(); dst.delete(); srcTri.delete(); dstTri.delete(); M.delete();
-    }
-
-    // --- 輔助：手勢 ---
     async function toggleGesture() {
+        const btn = document.getElementById('gestureBtn');
         if(!isGestureEnabled) {
-            showMask("載入手勢模型...");
-            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
-            models.gesture = await GestureRecognizer.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task" },
-                runningMode: "VIDEO"
-            });
-            hideMask();
+            if(!models.gesture) {
+                btn.innerText = "⏳";
+                try {
+                    const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+                    models.gesture = await GestureRecognizer.createFromOptions(vision, {
+                        baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task" },
+                        runningMode: "VIDEO"
+                    });
+                } catch(e) { alert("Load Failed"); btn.innerText = "✋"; return; }
+            }
             isGestureEnabled = true;
-            document.getElementById('gestureBtn').classList.add('active');
+            btn.classList.add('gesture-active');
         } else {
             isGestureEnabled = false;
-            document.getElementById('gestureBtn').classList.remove('active');
+            btn.classList.remove('gesture-active');
+            btn.innerText = "✋";
         }
     }
 
@@ -414,29 +495,122 @@
         if(!models.gesture) return;
         let now = Date.now();
         if(now - lastGestureTime < 2000) return;
-
         const res = models.gesture.recognizeForVideo(video, now);
         if(res.gestures.length > 0) {
             const name = res.gestures[0][0].categoryName;
             if(name === "Victory" || name === "Open_Palm") {
                 lastGestureTime = now;
-                showMask(`📸 3秒後拍攝 (${name})`);
-                setTimeout(() => { hideMask(); capture(); }, 3000);
+                infoPill.innerText = `Gesture: ${name}`;
+                infoPill.classList.add('warn-mode');
+                setTimeout(()=>captureAction(), 1500);
+                setTimeout(()=>{infoPill.classList.remove('warn-mode')}, 2000);
             }
         }
     }
 
-    // --- 輔助函式 ---
+    async function captureAction() {
+        showMask("處理中...");
+        try {
+            let canvas;
+            if (features.hdr) {
+                maskText.innerText = "HDR...";
+                canvas = await captureHDR(parseInt(document.getElementById('hdrCount').value));
+            } else {
+                canvas = await grabFrame();
+            }
+
+            if(currentMode === 'SCAN') {
+                saveImage(canvas, "Scan");
+            } else {
+                if(isOpenCvReady) {
+                    maskSub.innerText = "AI 優化中...";
+                    canvas = processEnhance(canvas);
+                }
+                saveImage(canvas, "Pro");
+            }
+        } catch(e) { alert("Error: " + e.message); }
+        hideMask();
+    }
+
+    // ★★★ 核心影像增強 (Lanczos + Detail) ★★★
+    function processEnhance(cvs) {
+        let src = cv.imread(cvs);
+        let dst = new cv.Mat();
+        let lab = new cv.Mat();
+        try {
+            cv.cvtColor(src, lab, cv.COLOR_RGBA2RGB);
+            cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
+            let planes = new cv.MatVector();
+            cv.split(lab, planes);
+            let L = planes.get(0);
+
+            if(features.denoise) {
+                let temp = new cv.Mat();
+                cv.bilateralFilter(L, temp, 5, 50, 50, cv.BORDER_DEFAULT);
+                temp.copyTo(L); temp.delete();
+            }
+            if(features.clahe) {
+                let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+                clahe.apply(L, L); clahe.delete();
+            }
+            let sharpVal = parseInt(document.getElementById('sharpSlider').value);
+            if(sharpVal > 0) {
+                let blurred = new cv.Mat();
+                cv.GaussianBlur(L, blurred, new cv.Size(0,0), 3);
+                cv.addWeighted(L, 1 + (sharpVal/50), blurred, -(sharpVal/50), 0, L);
+                blurred.delete();
+            }
+            planes.set(0, L); cv.merge(planes, lab); cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
+
+            // Upscale Logic: 0=Off, 1=2x, 2=Ultra(3x + Refine)
+            if(features.upscaleMode > 0) {
+                maskSub.innerText = features.upscaleMode === 2 ? "Generating 100MP..." : "2x AI Upscale...";
+                let scale = features.upscaleMode === 2 ? 3.0 : 2.0;
+                
+                let upDst = new cv.Mat();
+                // 使用 Lanczos4 進行更銳利的插值
+                cv.resize(dst, upDst, new cv.Size(0,0), scale, scale, cv.INTER_LANCZOS4);
+                
+                // 細節增強 (High-pass boost)
+                let upBlur = new cv.Mat();
+                cv.GaussianBlur(upDst, upBlur, new cv.Size(0,0), 3);
+                // Ultra 模式下強化力度更大 (1.5 vs 1.4)
+                let strength = features.upscaleMode === 2 ? 1.5 : 1.4;
+                cv.addWeighted(upDst, strength, upBlur, 1 - strength, 0, upDst);
+                
+                // 檢查 Canvas 是否過大 (保護機制)
+                let maxDim = 16384; // iOS Safari limit
+                if (upDst.cols > maxDim || upDst.rows > maxDim) {
+                    console.warn("Canvas too large, fallback to 2x");
+                    cv.resize(dst, upDst, new cv.Size(0,0), 2.0, 2.0, cv.INTER_LANCZOS4);
+                }
+
+                let newC = document.createElement('canvas');
+                newC.width = upDst.cols; newC.height = upDst.rows;
+                cv.imshow(newC, upDst);
+                cvs = newC;
+                upDst.delete(); upBlur.delete();
+            } else {
+                cv.imshow(cvs, dst);
+            }
+            planes.delete(); L.delete();
+        } catch(e) { console.error("Upscale Error", e); }
+        finally { src.delete(); dst.delete(); lab.delete(); }
+        return cvs;
+    }
+
     async function grabFrame() {
         if(imageCapture) {
+            if(lightMode === 'flash') {
+                try {
+                    const blob = await imageCapture.takePhoto({fillLightMode: 'flash'});
+                    return await createImageBitmap(blob);
+                } catch(e){}
+            }
             try {
                 const blob = await imageCapture.takePhoto();
-                const bmp = await createImageBitmap(blob);
-                const c = document.createElement('canvas');
-                c.width = bmp.width; c.height = bmp.height;
-                c.getContext('2d').drawImage(bmp, 0, 0);
-                return c;
-            } catch(e) {}
+                return await createImageBitmap(blob);
+            } catch(e){}
         }
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
@@ -444,20 +618,47 @@
         return c;
     }
 
-    function saveImage(canvas, prefix) {
+    async function captureHDR(count) {
+        let frames = [];
+        let startEv = -((count-1)/2);
+        for(let i=0; i<count; i++) {
+            let ev = startEv + i;
+            maskSub.innerText = `HDR ${i+1}/${count}`;
+            if(hwParams.exp) await videoTrack.applyConstraints({advanced:[{exposureCompensation: ev}]});
+            await new Promise(r => setTimeout(r, 200));
+            frames.push(await grabFrame());
+        }
+        if(hwParams.exp) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
+        
+        let base = frames[Math.floor(count/2)];
+        if(base instanceof ImageBitmap) {
+            let c = document.createElement('canvas');
+            c.width = base.width; c.height = base.height;
+            c.getContext('2d').drawImage(base, 0, 0);
+            base = c;
+        }
+        let ctx = base.getContext('2d');
+        ctx.globalAlpha = 0.5;
+        frames.forEach((f, i) => {
+            if(i !== Math.floor(count/2)) { ctx.globalCompositeOperation = 'overlay'; ctx.drawImage(f, 0, 0); }
+        });
+        return base;
+    }
+
+    function saveImage(c, pre) {
         const a = document.createElement('a');
-        a.download = `${prefix}_${Date.now()}.jpg`;
-        a.href = canvas.toDataURL('image/jpeg', 0.9);
+        let suffix = features.upscaleMode === 2 ? "_Ultra" : (features.upscaleMode === 1 ? "_2x" : "");
+        a.download = `${pre}${suffix}_${Date.now()}.jpg`;
+        a.href = c.toDataURL('image/jpeg', 0.95);
         a.click();
     }
 
-    function showMask(text) { mask.style.display = 'flex'; maskText.innerText = text; }
+    function showMask(t) { mask.style.display = 'flex'; maskText.innerText = t; maskSub.innerText = ""; }
     function hideMask() { mask.style.display = 'none'; }
 
     init();
 </script>
 </body>
 </html>
-
 
 
