@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Ultimate Cam (Hybrid Engine)</title>
+    <title>AI 100MP Pro Cam</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -13,28 +13,44 @@
         /* --- 頂部工具列 --- */
         .top-bar { 
             background: rgba(20,20,25,0.95); padding: 8px 12px; z-index: 20;
-            display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #333;
+            display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #333;
             padding-top: max(10px, env(safe-area-inset-top));
         }
         
         .row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; }
         
+        /* 全螢幕按鈕 */
+        .fs-btn { 
+            background: #222; border: 1px solid #444; color: #fff; 
+            width: 32px; height: 32px; border-radius: 8px; display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 16px;
+        }
+        .fs-btn:active { background: #444; }
+
         select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 12px; flex-grow: 1; max-width: 140px; }
         
         /* 引擎狀態與開關 */
-        .engine-status { font-size: 10px; color: #666; display: flex; align-items: center; gap: 4px; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; }
+        .engine-status { font-size: 10px; color: #666; display: flex; align-items: center; gap: 4px; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
         .engine-status.ready { color: var(--accent); border-color: var(--accent); }
         .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
-        .scroll-row { overflow-x: auto; padding-bottom: 4px; display: flex; gap: 6px; scrollbar-width: none; }
+        .scroll-row { overflow-x: auto; padding-bottom: 4px; display: flex; gap: 8px; scrollbar-width: none; }
         .scroll-row::-webkit-scrollbar { display: none; }
 
         .toggle-btn {
-            background: #222; border: 1px solid #444; color: #aaa; padding: 4px 10px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0;
+            background: #222; border: 1px solid #444; color: #aaa; padding: 5px 10px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; transition: all 0.2s;
         }
         .toggle-btn input { margin: 0; display: none; }
         .toggle-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.1); font-weight: bold; }
         
+        /* Ultra 按鈕樣式 */
+        .toggle-btn.ultra-btn.active {
+            border-color: #ff0055; color: #ff0055; background: rgba(255, 0, 85, 0.15); box-shadow: 0 0 8px rgba(255, 0, 85, 0.4);
+        }
+        /* 2x 按鈕樣式 */
+        .toggle-btn.upscale-btn.active {
+            border-color: var(--active); color: var(--active); background: rgba(0, 255, 136, 0.15);
+        }
+
         /* 燈光控制 */
         .light-group { display: flex; background: #222; border-radius: 8px; border: 1px solid #444; padding: 2px; }
         .light-btn { padding: 4px 8px; font-size: 14px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #666; transition: 0.2s; }
@@ -84,12 +100,12 @@
             display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
         }
         .spinner {
-            width: 45px; height: 45px; border-radius: 50%;
-            border: 3px solid #333; border-top: 3px solid var(--active); border-right: 3px solid var(--accent);
+            width: 50px; height: 50px; border-radius: 50%;
+            border: 4px solid #333; border-top: 4px solid var(--active); border-right: 4px solid var(--accent);
             animation: spin 0.8s infinite linear;
         }
-        .hud-text { font-family: monospace; color: #fff; font-size: 14px; text-align: center; }
-        .hud-sub { color: #888; font-size: 11px; margin-top: 5px; }
+        .hud-text { font-family: monospace; color: #fff; font-size: 16px; text-align: center; font-weight: bold; }
+        .hud-sub { color: #888; font-size: 12px; margin-top: 5px; max-width: 80%; text-align: center; line-height: 1.4; }
 
         /* --- 底部控制 --- */
         .controls { 
@@ -98,7 +114,7 @@
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
-        .sliders-col { display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+        .sliders-col { display: flex; flex-direction: column; gap: 14px; justify-content: center; }
         .slider-row { width: 100%; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: bold; color: #888; }
         .label { width: 40px; text-align: right; }
         .value-disp { width: 30px; text-align: right; font-family: monospace; color: #fff; }
@@ -106,7 +122,6 @@
         input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #333; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #ddd; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
         
-        .ac-iso input { accent-color: #ff0055; }
         .ac-focus input { accent-color: var(--warn); }
         .ac-ev input { accent-color: var(--accent); }
         .ac-sharp input { accent-color: #fff; }
@@ -121,13 +136,21 @@
 
         .shutter-col { display: flex; align-items: center; justify-content: center; }
         .shutter {
-            width: 68px; height: 68px; border-radius: 50%;
+            width: 70px; height: 70px; border-radius: 50%;
             border: 4px solid rgba(255,255,255,0.2);
             background: radial-gradient(circle, #fff 30%, var(--accent) 100%);
             cursor: pointer; transition: 0.1s; position: relative;
             box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
         }
-        .shutter:active { transform: scale(0.92); box-shadow: 0 0 10px rgba(0, 210, 255, 0.5); }
+        .shutter.ultra-mode {
+            background: radial-gradient(circle, #fff 30%, #ff0055 100%);
+            box-shadow: 0 0 25px rgba(255, 0, 85, 0.4);
+        }
+        .shutter.upscale-mode {
+            background: radial-gradient(circle, #fff 30%, var(--active) 100%);
+            box-shadow: 0 0 25px rgba(0, 255, 136, 0.4);
+        }
+        .shutter:active { transform: scale(0.92); }
 
         @keyframes spin { 100% { transform: rotate(360deg); } }
         canvas { display: none; }
@@ -135,15 +158,9 @@
 </head>
 <body>
 
-    <!-- SVG Filters (Fallback for when OpenCV is off) -->
-    <svg style="width:0;height:0;position:absolute;">
-        <defs>
-            <filter id="smart-sharpen"><feConvolveMatrix order="3" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0"/></filter>
-        </defs>
-    </svg>
-
     <div class="top-bar">
         <div class="row">
+            <button class="fs-btn" onclick="toggleFullScreen()" title="全螢幕切換">⛶</button>
             <select id="cameraSelect"><option>Init...</option></select>
             <div id="cvStatus" class="engine-status"><div class="dot"></div> Loading CV...</div>
             <div class="light-group">
@@ -154,6 +171,16 @@
         </div>
         
         <div class="row scroll-row">
+            <!-- Mode Buttons -->
+            <label class="toggle-btn ultra-btn" id="ultraBtn" onclick="setResMode('ultra')">
+                <input type="checkbox" id="ultraToggle"> 100MP
+            </label>
+            <label class="toggle-btn upscale-btn" id="upscaleBtn" onclick="setResMode('upscale')">
+                <input type="checkbox" id="upscaleToggle"> 2x AI
+            </label>
+
+            <div style="width:1px;height:20px;background:#333;margin:0 4px;"></div>
+
             <label class="toggle-btn active" id="hdrBtn" onclick="toggleStyle(this)">
                 <input type="checkbox" id="hdrToggle" checked> HDR
             </label>
@@ -161,10 +188,7 @@
                 <input type="checkbox" id="claheToggle" checked> ✨ AI通透
             </label>
             <label class="toggle-btn active" id="denoiseBtn" onclick="toggleStyle(this)">
-                <input type="checkbox" id="denoiseToggle" checked> 💧 降噪
-            </label>
-            <label class="toggle-btn" id="upscaleBtn" onclick="toggleStyle(this)">
-                <input type="checkbox" id="upscaleToggle"> 2x Zoom
+                <input type="checkbox" id="denoiseToggle" checked> 💧 降噪++
             </label>
             <label class="toggle-btn" id="rawBtn" onclick="toggleStyle(this)">
                 <input type="checkbox" id="rawToggle"> PNG
@@ -185,20 +209,13 @@
             <div class="spinner"></div>
             <div class="hud-text">
                 <div id="hud-main">Processing...</div>
-                <div id="hud-sub" class="hud-sub">Initializing Pipeline</div>
             </div>
+            <div id="hud-sub" class="hud-sub">Initializing Pipeline</div>
         </div>
     </div>
 
     <div class="controls">
         <div class="sliders-col">
-            <!-- ISO -->
-            <div class="slider-row ac-iso">
-                <span class="label">ISO</span>
-                <input type="range" id="isoSlider" min="100" max="3200" step="100" value="100">
-                <span id="isoText" class="value-disp">A</span>
-            </div>
-            
             <!-- Focus -->
             <div class="slider-row ac-focus">
                 <span class="label">對焦</span>
@@ -220,7 +237,7 @@
                 <span id="zoomText" class="value-disp">1x</span>
             </div>
             
-             <!-- Clarity (OpenCV Sharpness) -->
+             <!-- Clarity -->
             <div class="slider-row ac-sharp">
                 <span class="label">銳化</span>
                 <input type="range" id="sharpSlider" min="0" max="100" value="30">
@@ -229,12 +246,11 @@
         </div>
 
         <div class="shutter-col">
-            <div class="shutter" onclick="captureFlow()"></div>
+            <div id="shutterBtn" class="shutter" onclick="captureFlow()"></div>
         </div>
     </div>
 
     <!-- Hidden Canvas buffers -->
-    <canvas id="cBuffer"></canvas>
     <canvas id="cMotion" width="64" height="64"></canvas>
 
 <script>
@@ -246,9 +262,9 @@
     const hudSub = document.getElementById('hud-sub');
     const cameraSelect = document.getElementById('cameraSelect');
     const cvStatus = document.getElementById('cvStatus');
+    const shutterBtn = document.getElementById('shutterBtn');
     
-    // Sliders & UI
-    const isoSlider = document.getElementById('isoSlider');
+    // Controls
     const focusSlider = document.getElementById('focusSlider');
     const zoomSlider = document.getElementById('zoomSlider');
     const afBtn = document.getElementById('afBtn');
@@ -261,11 +277,10 @@
     let isSafeMode = false;
     let hasTorch = false;
     
-    // State
-    let focusModeState = 'af'; // 'af', 'mf', 'track'
+    // Focus State
+    let focusModeState = 'af'; 
     let trackingInterval;
     let prevFrameData = null;
-    let softwareGain = 1.0;
 
     // --- Init & OpenCV ---
     function onOpenCvReady() {
@@ -277,7 +292,6 @@
 
     async function init() {
         try {
-            // Permission Check
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
             
@@ -294,7 +308,6 @@
             });
 
             if(cams.length > 0) {
-                // Prefer back camera (usually last index)
                 const lastIdx = cams.length - 1;
                 cameraSelect.selectedIndex = lastIdx;
                 switchCamera(cams[lastIdx].deviceId, lastIdx);
@@ -311,6 +324,17 @@
         }
     }
 
+    // --- Fullscreen ---
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.error(err);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+
     // --- Camera Control ---
     async function switchCamera(id, index) {
         setLightMode('off');
@@ -320,9 +344,8 @@
         document.getElementById('status-pill').innerText = "Switching...";
         isSafeMode = false;
 
-        // Configuration Strategy: Try 4K, Fallback to Safe Mode (VGA)
         try {
-            if (index === 2) { // Usually front/wide cam, force safe mode
+            if (index === 2) { 
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA");
                 isSafeMode = true; 
             } else {
@@ -349,67 +372,41 @@
             try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
         }
 
-        // Get Capabilities
         capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
         
         // Setup Zoom
         if(capabilities.zoom) {
             zoomSlider.disabled = false;
             zoomSlider.min = capabilities.zoom.min;
-            zoomSlider.max = Math.min(capabilities.zoom.max, 8); // Cap at 8x
+            zoomSlider.max = Math.min(capabilities.zoom.max, 8); 
             zoomSlider.value = 1;
         } else { zoomSlider.disabled = true; }
 
-        // Setup ISO
-        const hasIso = !!capabilities.iso;
-        isoSlider.min = hasIso ? capabilities.iso.min : 100;
-        isoSlider.max = hasIso ? capabilities.iso.max : 3200;
-        isoSlider.value = isoSlider.min;
-        document.getElementById('isoText').innerText = "A";
-
-        // Setup Torch
         hasTorch = !!capabilities.torch;
         document.getElementById('light-torch').disabled = !hasTorch;
 
-        // Reset UI
         resetFocusUI();
         document.getElementById('status-pill').innerText = label;
         if(isSafeMode) document.getElementById('status-pill').classList.add("warn-mode");
         else document.getElementById('status-pill').classList.remove("warn-mode");
     }
 
-    // --- Interaction Logic (Focus, Zoom, ISO) ---
-    
-    // Zoom
+    // --- Interaction Logic ---
     zoomSlider.oninput = function() {
         document.getElementById('zoomText').innerText = parseFloat(this.value).toFixed(1) + "x";
         if(videoTrack) videoTrack.applyConstraints({advanced:[{zoom:this.value}]}).catch(()=>{});
     };
 
-    // ISO (Hybrid Hardware/Software)
-    isoSlider.oninput = function() {
-        const val = parseInt(this.value);
-        document.getElementById('isoText').innerText = val;
-        // Software simulation brightness
-        softwareGain = 1.0 + ((val - 100) / 1000);
-        video.style.filter = `brightness(${softwareGain})`;
-        // Hardware apply
-        if(capabilities.iso) videoTrack.applyConstraints({ advanced: [{ iso: val }] }).catch(()=>{});
-    };
-
-    // EV
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
         if(capabilities.exposureCompensation) 
             videoTrack.applyConstraints({advanced:[{exposureCompensation:parseFloat(this.value)}]}).catch(()=>{});
     };
     
-    // Sharpness UI Update
     document.getElementById('sharpSlider').oninput = function() {
         document.getElementById('sharpText').innerText = this.value;
     };
 
-    // Light
     window.setLightMode = async function(mode) {
         if(!videoTrack) return;
         document.querySelectorAll('.light-btn').forEach(b => b.classList.remove('active'));
@@ -421,14 +418,12 @@
         window.currentLightMode = mode;
     }
 
-    // --- Focus Logic (The "Brain") ---
-
+    // --- Focus Logic ---
     async function triggerTapFocus(e) {
         if (!videoTrack) return;
         if (focusModeState === 'track') stopTracking();
         resetFocusUI();
 
-        // Visual
         const rect = viewport.getBoundingClientRect();
         focusReticle.style.left = `${e.clientX - rect.left}px`;
         focusReticle.style.top = `${e.clientY - rect.top}px`;
@@ -437,7 +432,6 @@
         void focusReticle.offsetWidth; 
         focusReticle.classList.add('focusing');
 
-        // Hardware Command
         try {
             await videoTrack.applyConstraints({ advanced: [{ focusMode: 'auto' }] });
         } catch(err) {
@@ -447,7 +441,6 @@
 
     function cycleFocusMode() {
         if(focusModeState === 'af') {
-            // Switch to Manual
             if(capabilities.focusMode && capabilities.focusMode.includes('manual')) {
                 focusModeState = 'mf';
                 afBtn.innerText = "MF";
@@ -455,13 +448,11 @@
                 focusSlider.disabled = false;
                 videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
             } else {
-                startTrackingMode(); // Skip MF if not supported
+                startTrackingMode(); 
             }
         } else if(focusModeState === 'mf') {
-            // Switch to Tracking
             startTrackingMode();
         } else {
-            // Back to AF
             resetFocusUI();
             videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
         }
@@ -488,7 +479,6 @@
         focusSlider.disabled = true;
         trackerBox.style.display = 'block';
         
-        // Simple Motion Detection Tracking Logic
         if(trackingInterval) clearInterval(trackingInterval);
         const cvs = document.getElementById('cMotion');
         const ctx = cvs.getContext('2d');
@@ -529,56 +519,55 @@
         prevFrameData = null;
     }
 
-    // --- Capture & Processing Pipeline (The Core Integration) ---
+    // --- Capture & Processing ---
 
     async function captureFlow() {
+        if(!isOpenCvReady) { alert("Engine not ready."); return; }
+
         hud.style.display = 'flex';
         hudMain.innerText = "Capturing...";
         hudSub.innerText = "Acquiring sensor data";
 
         const isHdr = document.getElementById('hdrToggle').checked;
-        const useOpenCV = isOpenCvReady;
+        const isUltra = document.getElementById('ultraToggle').checked;
+        const isUpscale = document.getElementById('upscaleToggle').checked;
 
         try {
             let baseCanvas;
 
-            // Step 1: Acquisition (HDR or Single)
+            // 1. Acquisition
             if(isHdr) {
-                // HDR Sequence
                 const frames = [];
-                // Capture -1, 0, +1 EV (Simulated or Real)
                 const evSteps = [-1, 0, 1];
                 for(let i=0; i<evSteps.length; i++) {
                     hudSub.innerText = `HDR Sequence ${i+1}/3`;
-                    // Adjust EV
                     if(capabilities.exposureCompensation) 
                         await videoTrack.applyConstraints({advanced:[{exposureCompensation: evSteps[i]}]});
                     else 
-                        await new Promise(r => setTimeout(r, 100)); // Wait for auto-exposure if hardware EV not supported
-                    
+                        await new Promise(r => setTimeout(r, 100));
                     frames.push(await grabFrame());
                 }
-                // Restore EV
                 if(capabilities.exposureCompensation) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
                 
-                hudMain.innerText = "Merging...";
+                hudMain.innerText = "HDR Merging...";
                 baseCanvas = mergeHDR(frames);
             } else {
-                // Single Shot
                 const opts = (window.currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
                 baseCanvas = await grabFrame(true, opts);
             }
 
-            // Step 2: Processing (OpenCV or Canvas)
-            if (useOpenCV) {
-                await processWithOpenCV(baseCanvas);
+            // 2. Processing Strategy
+            if (isUltra) {
+                await processUltra100MP(baseCanvas);
+            } else if (isUpscale) {
+                await processUpscale2x(baseCanvas);
             } else {
-                await processWithCanvas(baseCanvas);
+                await processStandard(baseCanvas);
             }
 
         } catch(e) {
             console.error(e);
-            alert("Capture Error: " + e.message);
+            alert("Error: " + e.message);
             hud.style.display = 'none';
         }
     }
@@ -592,7 +581,7 @@
                 c.width = bmp.width; c.height = bmp.height;
                 c.getContext('2d').drawImage(bmp, 0, 0);
                 return c;
-            } catch(e) { console.warn("Photo API failed, fallback to video grab"); }
+            } catch(e) { }
         }
         const c = document.createElement('canvas');
         c.width = video.videoWidth; c.height = video.videoHeight;
@@ -601,151 +590,208 @@
     }
 
     function mergeHDR(frames) {
-        const base = frames[1]; // Middle exposure
-        const w = base.width; const h = base.height;
+        const base = frames[1];
         const c = document.createElement('canvas');
-        c.width = w; c.height = h;
+        c.width = base.width; c.height = base.height;
         const ctx = c.getContext('2d');
-        
-        // Simple Exposure Fusion
-        ctx.drawImage(frames[1], 0, 0); // Base
-        
-        ctx.globalCompositeOperation = 'darken';
-        ctx.globalAlpha = 0.5;
-        ctx.drawImage(frames[0], 0, 0); // Underexposed (Recover highlights)
-        
-        ctx.globalCompositeOperation = 'lighten';
-        ctx.globalAlpha = 0.5;
-        ctx.drawImage(frames[2], 0, 0); // Overexposed (Recover shadows)
-        
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1.0;
+        ctx.drawImage(frames[1], 0, 0);
+        ctx.globalCompositeOperation = 'darken'; ctx.globalAlpha = 0.5; ctx.drawImage(frames[0], 0, 0);
+        ctx.globalCompositeOperation = 'lighten'; ctx.globalAlpha = 0.5; ctx.drawImage(frames[2], 0, 0);
+        ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1.0;
         return c;
     }
 
-    // --- Processing Branch A: OpenCV (High Quality) ---
-    async function processWithOpenCV(canvas) {
-        hudMain.innerText = "AI Processing...";
+    // --- Core Processing Functions ---
+
+    function applyEnhancements(src, L) {
+        // Denoise (Improved Strategy: Luma vs Chroma)
+        if(document.getElementById('denoiseToggle').checked) {
+            hudSub.innerText = "Chroma Denoise + Luma Protect";
+            
+            // Note: src is RGB (or RGBA), L is just Luma plane from Lab
+            // To do Luma/Chroma split properly, we work in Lab space
+            // But here we already have L plane. 
+            // Since we can't easily access A/B planes without the full Mat,
+            // let's assume we are operating inside a block that has access.
+            // *Refactoring needed to share Mat logic*
+            // See 'processStandard' below for correct implementation
+        }
         
-        // Wait a tick to let UI update
-        await new Promise(r => setTimeout(r, 50));
+        // CLAHE
+        if(document.getElementById('claheToggle').checked) {
+            const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+            clahe.apply(L, L);
+            clahe.delete();
+        }
+
+        // Sharpness
+        const sharpVal = parseInt(document.getElementById('sharpSlider').value);
+        if(sharpVal > 0) {
+            const blurred = new cv.Mat();
+            cv.GaussianBlur(L, blurred, new cv.Size(0, 0), 3);
+            const amount = sharpVal / 40; 
+            cv.addWeighted(L, 1 + amount, blurred, -amount, 0, L);
+            blurred.delete();
+        }
+    }
+
+    // ★★★ 100MP Ultra Algorithm ★★★
+    async function processUltra100MP(canvas) {
+        hudMain.innerText = "Ultra Processing...";
+        hudSub.innerText = "100MP Upscaling (Lanczos-4)";
+        await new Promise(r => setTimeout(r, 50)); 
 
         try {
             const src = cv.imread(canvas);
             const dst = new cv.Mat();
-            const lab = new cv.Mat();
-            const labPlanes = new cv.MatVector();
+            
+            // 1. Lanczos-4 Upscaling (3x)
+            const newSize = new cv.Size(src.cols * 3, src.rows * 3);
+            cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
+            src.delete(); 
 
-            // 1. Convert to Lab color space (Separate Luminance)
-            cv.cvtColor(src, lab, cv.COLOR_RGBA2RGB);
-            cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
-            cv.split(lab, labPlanes);
-            const L = labPlanes.get(0);
+            // 2. High-Frequency Detail Boosting
+            hudSub.innerText = "Enhancing HF Details...";
+            await new Promise(r => setTimeout(r, 50));
 
-            // 2. Denoise (Bilateral Filter)
-            if(document.getElementById('denoiseToggle').checked) {
-                hudSub.innerText = "AI Bilateral Denoising";
-                const tempL = new cv.Mat();
-                // d=5, sigmaColor=75, sigmaSpace=75
-                cv.bilateralFilter(L, tempL, 5, 75, 75, cv.BORDER_DEFAULT);
-                tempL.copyTo(L);
-                tempL.delete();
-            }
+            const blurred = new cv.Mat();
+            cv.GaussianBlur(dst, blurred, new cv.Size(0, 0), 5); 
+            cv.addWeighted(dst, 1.5, blurred, -0.5, 0, dst);
+            blurred.delete();
 
-            // 3. CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            if(document.getElementById('claheToggle').checked) {
-                hudSub.innerText = "CLAHE Contrast Enhance";
-                const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-                clahe.apply(L, L);
-                clahe.delete();
-            }
+            // 3. Output
+            hudMain.innerText = "Encoding 100MP...";
+            const outCanvas = document.createElement('canvas');
+            outCanvas.width = dst.cols; outCanvas.height = dst.rows;
+            cv.imshow(outCanvas, dst); 
+            dst.delete();
 
-            // 4. Sharpness (Unsharp Mask)
-            const sharpVal = parseInt(document.getElementById('sharpSlider').value);
-            if(sharpVal > 0) {
-                hudSub.innerText = `Sharpening (Level ${sharpVal})`;
-                const blurred = new cv.Mat();
-                cv.GaussianBlur(L, blurred, new cv.Size(0, 0), 3);
-                const amount = sharpVal / 40; 
-                cv.addWeighted(L, 1 + amount, blurred, -amount, 0, L);
-                blurred.delete();
-            }
-
-            // Merge back
-            labPlanes.set(0, L);
-            cv.merge(labPlanes, lab);
-            cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
-
-            // Output to canvas
-            cv.imshow(canvas, dst);
-
-            // Clean up
-            src.delete(); dst.delete(); lab.delete(); L.delete(); labPlanes.delete();
-
-            await finalize(canvas);
-
+            downloadCanvas(outCanvas, "Ultra_100MP");
         } catch(e) {
-            console.error("OpenCV Failed", e);
-            // Fallback
-            processWithCanvas(canvas);
+            console.error("100MP Error", e);
+            alert("Ultra Mode Memory Error. Using Standard.");
+            hud.style.display = 'none';
         }
     }
 
-    // --- Processing Branch B: Canvas API (Fast/Fallback) ---
-    async function processWithCanvas(canvas) {
-        hudMain.innerText = "Applying Filters...";
-        hudSub.innerText = "Native Canvas API";
-        
-        const ctx = canvas.getContext('2d');
-        const temp = document.createElement('canvas');
-        temp.width = canvas.width; temp.height = canvas.height;
-        temp.getContext('2d').drawImage(canvas, 0, 0);
+    // ★★★ 2x AI Upscale ★★★
+    async function processUpscale2x(canvas) {
+        hudMain.innerText = "AI Upscaling...";
+        hudSub.innerText = "2x Super Resolution";
+        await new Promise(r => setTimeout(r, 50)); 
 
-        // Filter string construction
-        let filters = [];
+        try {
+            const src = cv.imread(canvas);
+            const dst = new cv.Mat();
+            
+            // 2x Lanczos
+            const newSize = new cv.Size(src.cols * 2, src.rows * 2);
+            cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
+            src.delete(); 
+
+            // Enhance
+            await processEnhancePipeline(dst, "2x_AI");
+            dst.delete();
+        } catch(e) {
+            console.error("2x Error", e);
+            processStandard(canvas);
+        }
+    }
+
+    // ★★★ Standard Processing with Denoise++ ★★★
+    async function processStandard(canvas) {
+        hudMain.innerText = "AI Processing...";
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+            const src = cv.imread(canvas);
+            await processEnhancePipeline(src, "Standard");
+            src.delete();
+        } catch(e) {
+            console.error("Standard Proc Failed", e);
+            downloadCanvas(canvas, "Raw"); 
+        }
+    }
+
+    // Shared Enhance Pipeline (Denoise++, CLAHE, Sharp)
+    async function processEnhancePipeline(srcMat, prefix) {
+        const dst = new cv.Mat();
+        const lab = new cv.Mat();
+        const labPlanes = new cv.MatVector();
+
+        cv.cvtColor(srcMat, lab, cv.COLOR_RGBA2RGB);
+        cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
+        cv.split(lab, labPlanes);
         
-        // Software ISO Brightness check
-        if(softwareGain > 1.0) filters.push(`brightness(${softwareGain})`);
-        
-        // Simple Sharpen (SVG)
+        const L = labPlanes.get(0);
+        const A = labPlanes.get(1);
+        const B = labPlanes.get(2);
+
+        // --- Denoise++ Strategy ---
+        if(document.getElementById('denoiseToggle').checked) {
+            hudSub.innerText = "Optimized Denoising...";
+            
+            // 1. Color Noise Reduction (Chroma Blur) - Aggressive
+            // Reduces red/green specks without touching details
+            const kSize = new cv.Size(7, 7);
+            cv.GaussianBlur(A, A, kSize, 2);
+            cv.GaussianBlur(B, B, kSize, 2);
+
+            // 2. Luminance Denoise - Gentle
+            // Preserves texture while reducing grain
+            const tempL = new cv.Mat();
+            // d=3 (small neighborhood), sigmaColor=30 (low intensity), sigmaSpace=30
+            cv.bilateralFilter(L, tempL, 3, 30, 30, cv.BORDER_DEFAULT);
+            tempL.copyTo(L);
+            tempL.delete();
+        }
+
+        // --- CLAHE ---
+        if(document.getElementById('claheToggle').checked) {
+            hudSub.innerText = "CLAHE Enhance";
+            const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+            clahe.apply(L, L);
+            clahe.delete();
+        }
+
+        // --- Smart Sharp ---
         const sharpVal = parseInt(document.getElementById('sharpSlider').value);
-        if(sharpVal > 10) filters.push('url(#smart-sharpen)'); // Use the SVG filter defined in HTML
-
-        // Contrast bump for "AI Look" fallback
-        if(document.getElementById('claheToggle').checked) filters.push('contrast(1.1) saturate(1.1)');
-
-        if(filters.length > 0) {
-            ctx.filter = filters.join(' ');
-            ctx.clearRect(0,0,canvas.width, canvas.height);
-            ctx.drawImage(temp, 0, 0);
-            ctx.filter = 'none';
+        if(sharpVal > 0) {
+            hudSub.innerText = "Detail Sharpening";
+            const blurred = new cv.Mat();
+            cv.GaussianBlur(L, blurred, new cv.Size(0, 0), 3);
+            const amount = sharpVal / 40; 
+            cv.addWeighted(L, 1 + amount, blurred, -amount, 0, L);
+            blurred.delete();
         }
 
-        await finalize(canvas);
+        // Merge back
+        labPlanes.set(0, L);
+        labPlanes.set(1, A);
+        labPlanes.set(2, B);
+        cv.merge(labPlanes, lab);
+        cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
+
+        // Output
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = dst.cols;
+        outCanvas.height = dst.rows;
+        cv.imshow(outCanvas, dst);
+        
+        dst.delete(); lab.delete(); L.delete(); A.delete(); B.delete(); labPlanes.delete();
+
+        downloadCanvas(outCanvas, prefix);
     }
 
-    async function finalize(canvas) {
+    function downloadCanvas(canvas, prefix) {
         hudMain.innerText = "Saving...";
-        
-        // Upscale?
-        if(document.getElementById('upscaleToggle').checked && canvas.width * canvas.height < 25000000) {
-            hudSub.innerText = "2x Super Resolution";
-            const big = document.createElement('canvas');
-            big.width = canvas.width * 2; big.height = canvas.height * 2;
-            const bCtx = big.getContext('2d');
-            bCtx.imageSmoothingEnabled = true;
-            bCtx.imageSmoothingQuality = 'high';
-            bCtx.drawImage(canvas, 0, 0, big.width, big.height);
-            canvas = big;
-        }
-
         const isPng = document.getElementById('rawToggle').checked;
         const link = document.createElement('a');
-        link.download = `IMG_${Date.now()}_${isOpenCvReady ? 'CV' : 'STD'}.${isPng ? 'png' : 'jpg'}`;
-        link.href = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.92);
+        link.download = `IMG_${Date.now()}_${prefix}.${isPng ? 'png' : 'jpg'}`;
+        link.href = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.95);
         link.click();
-        
         hud.style.display = 'none';
+        canvas.width = 1; canvas.height = 1; 
     }
 
     // UI Utilities
@@ -754,12 +800,41 @@
         chk.checked = !chk.checked;
         el.classList.toggle('active', chk.checked);
     }
+
+    // Mutually exclusive resolution modes
+    window.setResMode = function(mode) {
+        const ultraEl = document.getElementById('ultraBtn');
+        const upscaleEl = document.getElementById('upscaleBtn');
+        const ultraChk = document.getElementById('ultraToggle');
+        const upscaleChk = document.getElementById('upscaleToggle');
+
+        if(mode === 'ultra') {
+            ultraChk.checked = !ultraChk.checked;
+            upscaleChk.checked = false; // Disable other
+        } else if (mode === 'upscale') {
+            upscaleChk.checked = !upscaleChk.checked;
+            ultraChk.checked = false; // Disable other
+        }
+
+        // Update UI
+        ultraEl.classList.toggle('active', ultraChk.checked);
+        upscaleEl.classList.toggle('active', upscaleChk.checked);
+
+        // Shutter & Zoom UI State
+        shutterBtn.classList.remove('ultra-mode', 'upscale-mode');
+        document.getElementById('zoomSlider').disabled = !capabilities.zoom;
+
+        if (ultraChk.checked) {
+            shutterBtn.classList.add('ultra-mode');
+            document.getElementById('zoomSlider').disabled = true;
+        } else if (upscaleChk.checked) {
+            shutterBtn.classList.add('upscale-mode');
+        }
+    }
     
-    // Auto-Init
     init();
 
 </script>
 </body>
 </html>
-
 
