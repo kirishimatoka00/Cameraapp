@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (Final)</title>
+    <title>AI 100MP Pro (HDR+)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -34,11 +34,25 @@
         .scroll-row { overflow-x: auto; padding-bottom: 4px; display: flex; gap: 8px; scrollbar-width: none; }
         .scroll-row::-webkit-scrollbar { display: none; }
 
+        /* 一般按鈕 */
         .toggle-btn {
             background: #222; border: 1px solid #444; color: #aaa; padding: 5px 10px; border-radius: 12px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; transition: all 0.2s;
         }
         .toggle-btn input { margin: 0; display: none; }
         .toggle-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.1); font-weight: bold; }
+        
+        /* 複合按鈕群組 (HDR) */
+        .btn-group {
+            display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 12px; overflow: hidden;
+        }
+        .btn-group .toggle-btn {
+            border: none; border-radius: 0; padding-right: 5px; background: transparent; height: 100%;
+        }
+        .btn-group select {
+            border: none; background: #1a1a1a; color: #aaa; font-size: 10px; height: 26px; padding: 0 2px; width: auto; max-width: 45px; border-left: 1px solid #444; border-radius: 0;
+        }
+        .btn-group.active { border-color: var(--accent); }
+        .btn-group.active .toggle-btn { color: var(--accent); font-weight: bold; background: rgba(0, 210, 255, 0.1); }
         
         /* Ultra 按鈕樣式 */
         .toggle-btn.ultra-btn.active {
@@ -180,9 +194,18 @@
 
             <div style="width:1px;height:20px;background:#333;margin:0 4px;"></div>
 
-            <label class="toggle-btn active" id="hdrBtn" onclick="toggleStyle(this)">
-                <input type="checkbox" id="hdrToggle" checked> HDR
-            </label>
+            <!-- HDR Group with Selector -->
+            <div id="hdrGroup" class="btn-group active">
+                <label class="toggle-btn" onclick="toggleHdrGroup(this)">
+                    <input type="checkbox" id="hdrToggle" checked> HDR
+                </label>
+                <select id="hdrCount">
+                    <option value="3">3x</option>
+                    <option value="5">5x</option>
+                    <option value="7">7x</option>
+                </select>
+            </div>
+
             <label class="toggle-btn active" id="claheBtn" onclick="toggleStyle(this)">
                 <input type="checkbox" id="claheToggle" checked> ✨ AI通透
             </label>
@@ -273,7 +296,7 @@
     let isOpenCvReady = false;
     let isSafeMode = false;
     let hasTorch = false;
-    let currentCameraIndex = 0; // 用於追蹤當前相機
+    let currentCameraIndex = 0; 
     
     let focusModeState = 'af'; 
     let trackingInterval;
@@ -329,8 +352,7 @@
     async function switchCamera(id, index) {
         setLightMode('off');
         stopTracking();
-        
-        currentCameraIndex = index; // 記錄當前 Index
+        currentCameraIndex = index;
         
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
         document.getElementById('status-pill').innerText = "Switching...";
@@ -338,7 +360,6 @@
 
         try {
             if (index === 2) { 
-                // Camera 2 預設開啟 Safe Mode
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA");
                 isSafeMode = true; 
             } else {
@@ -351,25 +372,20 @@
                 isSafeMode = true; 
             } catch(e2) { alert("啟動相機失敗"); }
         }
-        
-        // 切換後檢查 UI 限制
         updateUIForCamera();
     }
 
-    // 檢查鏡頭並更新按鈕狀態
     function updateUIForCamera() {
         const ultraBtn = document.getElementById('ultraBtn');
         const ultraToggle = document.getElementById('ultraToggle');
         
         if (isSafeMode || currentCameraIndex === 2) {
-            // 強制關閉 100MP
             if (ultraToggle.checked) {
                 ultraToggle.checked = false;
                 ultraBtn.classList.remove('active');
                 shutterBtn.classList.remove('ultra-mode');
                 document.getElementById('zoomSlider').disabled = !capabilities.zoom;
             }
-            // 禁用按鈕
             ultraBtn.classList.add('disabled');
         } else {
             ultraBtn.classList.remove('disabled');
@@ -526,6 +542,7 @@
         prevFrameData = null;
     }
 
+    // --- Capture Flow ---
     async function captureFlow() {
         if(!isOpenCvReady) { alert("Engine not ready."); return; }
 
@@ -540,16 +557,28 @@
         try {
             let baseCanvas;
             if(isHdr) {
+                // HDR Logic: Read count and step
+                const count = parseInt(document.getElementById('hdrCount').value);
+                const step = 0.3; // Default 0.3EV step
                 const frames = [];
-                const evSteps = [-1, 0, 1];
-                for(let i=0; i<evSteps.length; i++) {
-                    hudSub.innerText = `HDR Sequence ${i+1}/3`;
+                
+                // Calculate EV offsets. Center is 0.
+                // e.g. 5 frames: -0.6, -0.3, 0, 0.3, 0.6
+                const centerIndex = Math.floor(count / 2);
+                
+                for(let i=0; i<count; i++) {
+                    const ev = (i - centerIndex) * step;
+                    hudSub.innerText = `HDR Sequence ${i+1}/${count} (EV ${ev.toFixed(1)})`;
+                    
                     if(capabilities.exposureCompensation) 
-                        await videoTrack.applyConstraints({advanced:[{exposureCompensation: evSteps[i]}]});
+                        await videoTrack.applyConstraints({advanced:[{exposureCompensation: ev}]});
                     else 
-                        await new Promise(r => setTimeout(r, 100));
+                        await new Promise(r => setTimeout(r, 100)); // wait for auto-exposure if no HW support
+                    
                     frames.push(await grabFrame());
                 }
+                
+                // Restore EV
                 if(capabilities.exposureCompensation) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
                 
                 hudMain.innerText = "HDR Merging...";
@@ -559,7 +588,7 @@
                 baseCanvas = await grabFrame(true, opts);
             }
 
-            // Route to correct pipeline
+            // Processing Pipeline
             if (isUltra) {
                 await processUltra100MP(baseCanvas);
             } else if (isUpscale) {
@@ -569,7 +598,7 @@
             }
         } catch(e) {
             console.error(e);
-            alert("Error: " + (e.message || e)); // Robust logging
+            alert("Error: " + (e.message || e));
             hud.style.display = 'none';
         }
     }
@@ -591,83 +620,77 @@
         return c;
     }
 
+    // Dynamic HDR Merge for N frames
     function mergeHDR(frames) {
-        const base = frames[1];
+        const centerIdx = Math.floor(frames.length / 2);
+        const base = frames[centerIdx]; // The 0 EV frame
         const c = document.createElement('canvas');
         c.width = base.width; c.height = base.height;
         const ctx = c.getContext('2d');
-        ctx.drawImage(frames[1], 0, 0);
-        ctx.globalCompositeOperation = 'darken'; ctx.globalAlpha = 0.5; ctx.drawImage(frames[0], 0, 0);
-        ctx.globalCompositeOperation = 'lighten'; ctx.globalAlpha = 0.5; ctx.drawImage(frames[2], 0, 0);
-        ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1.0;
+        
+        // Draw base frame
+        ctx.drawImage(base, 0, 0);
+        
+        // Strategy: 
+        // 1. Darker frames (Underexposed) recover highlights (indices < center)
+        ctx.globalCompositeOperation = 'darken';
+        ctx.globalAlpha = 0.5;
+        for(let i=0; i<centerIdx; i++) {
+            ctx.drawImage(frames[i], 0, 0);
+        }
+        
+        // 2. Lighter frames (Overexposed) recover shadows (indices > center)
+        ctx.globalCompositeOperation = 'lighten';
+        for(let i=centerIdx+1; i<frames.length; i++) {
+            ctx.drawImage(frames[i], 0, 0);
+        }
+        
+        // Reset
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
         return c;
     }
 
-    // ★★★ 2x AI Upscale (Hybrid: Canvas Scale + OpenCV Enhance) ★★★
-    // FIXED: Use matFromImageData to avoid DOM/OOM issues on detached canvas
     async function processUpscale2x(canvas) {
         hudMain.innerText = "AI Upscaling...";
         hudSub.innerText = "2x Native Super-Res";
         await new Promise(r => setTimeout(r, 50)); 
-        
         let upCanvas;
-
         try {
-            // Step 1: Robust Canvas Scaling (The "Stable" Part)
             upCanvas = document.createElement('canvas');
             upCanvas.width = canvas.width * 2;
             upCanvas.height = canvas.height * 2;
             const ctx = upCanvas.getContext('2d');
-            
-            // High Quality Bicubic/Lanczos (Browser implementation)
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
             
-            // Step 2: Pass the ALREADY SCALED canvas to OpenCV for enhancement
-            // Use getImageData + matFromImageData for 100% stability
             const imgData = ctx.getImageData(0, 0, upCanvas.width, upCanvas.height);
             const src = cv.matFromImageData(imgData);
-            
-            // Run AI Denoise/Sharpen on the upscaled image
             await processEnhancePipeline(src, "2x_AI");
-            
-            // Cleanup
             src.delete();
-            
         } catch(e) {
             console.error("2x CV Error", e);
-            // FAIL-SAFE: If OpenCV fails (e.g. OOM), we still download the 2x canvas!
-            // This ensures "2x" always works, even without AI enhancement.
-            if(upCanvas) {
-                downloadCanvas(upCanvas, "2x_Basic");
-            } else {
-                alert("2x Error: " + (e.message || e));
-            }
+            if(upCanvas) downloadCanvas(upCanvas, "2x_Basic");
+            else alert("2x Error: " + (e.message || e));
         }
     }
 
-    // ★★★ 100MP Ultra Algorithm ★★★
     async function processUltra100MP(canvas) {
         hudMain.innerText = "Ultra Processing...";
         await new Promise(r => setTimeout(r, 50)); 
-
         try {
             const src = cv.imread(canvas);
             const srcPixels = src.cols * src.rows;
             const targetPixels = srcPixels * 9; 
-            
-            // Lite Mode if > 50MP to save RAM
             const useLiteMode = targetPixels > 50000000;
             
             const dst = new cv.Mat();
             const newSize = new cv.Size(src.cols * 3, src.rows * 3);
-            
             hudSub.innerText = useLiteMode ? "100MP Upscale (Lite Mode)" : "100MP Upscale + HF Boost";
             cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
             src.delete(); 
 
-            // HF Boost 
             if (!useLiteMode) {
                 hudSub.innerText = "Enhancing Texture...";
                 await new Promise(r => setTimeout(r, 50));
@@ -676,17 +699,13 @@
                 cv.addWeighted(dst, 1.5, blurred, -0.5, 0, dst);
                 blurred.delete();
             }
-
-            // Output
             hudMain.innerText = "Encoding...";
             const outCanvas = document.createElement('canvas');
             outCanvas.width = dst.cols; outCanvas.height = dst.rows;
             cv.imshow(outCanvas, dst); 
             dst.delete();
-
             downloadCanvas(outCanvas, "Ultra_100MP");
         } catch(e) {
-            console.error("100MP Error", e);
             alert("Memory Error. Switching to standard 2x mode.");
             processUpscale2x(canvas); 
         }
@@ -699,18 +718,14 @@
             const src = cv.imread(canvas);
             await processEnhancePipeline(src, "Standard");
             src.delete();
-        } catch(e) {
-            downloadCanvas(canvas, "Raw"); 
-        }
+        } catch(e) { downloadCanvas(canvas, "Raw"); }
     }
 
-    // Shared Enhance Pipeline (Processes Mat and Downloads)
     async function processEnhancePipeline(srcMat, prefix) {
         const dst = new cv.Mat();
         const lab = new cv.Mat();
         const labPlanes = new cv.MatVector();
 
-        // Check if srcMat is valid
         if (srcMat.empty()) throw new Error("Source matrix is empty");
 
         cv.cvtColor(srcMat, lab, cv.COLOR_RGBA2RGB);
@@ -721,27 +736,23 @@
         const A = labPlanes.get(1);
         const B = labPlanes.get(2);
 
-        // --- Denoise++ ---
         if(document.getElementById('denoiseToggle').checked) {
             hudSub.innerText = "Denoising...";
             const kSize = new cv.Size(7, 7);
             cv.GaussianBlur(A, A, kSize, 2);
             cv.GaussianBlur(B, B, kSize, 2);
-            
             const tempL = new cv.Mat();
             cv.bilateralFilter(L, tempL, 3, 30, 30, cv.BORDER_DEFAULT);
             tempL.copyTo(L);
             tempL.delete();
         }
 
-        // --- CLAHE ---
         if(document.getElementById('claheToggle').checked) {
             const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
             clahe.apply(L, L);
             clahe.delete();
         }
 
-        // --- Sharpness ---
         const sharpVal = parseInt(document.getElementById('sharpSlider').value);
         if(sharpVal > 0) {
             const blurred = new cv.Mat();
@@ -757,7 +768,6 @@
         cv.merge(labPlanes, lab);
         cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
 
-        // Output logic (Use dst size which is derived from srcMat)
         const outCanvas = document.createElement('canvas');
         outCanvas.width = dst.cols;
         outCanvas.height = dst.rows;
@@ -778,7 +788,6 @@
             link.download = `IMG_${Date.now()}_${prefix}.${isPng ? 'png' : 'jpg'}`;
             link.href = URL.createObjectURL(blob);
             link.click();
-            
             setTimeout(() => {
                 URL.revokeObjectURL(link.href);
                 canvas.width = 1; canvas.height = 1; 
@@ -788,18 +797,23 @@
     }
 
     window.toggleStyle = function(el) {
-        if (el.classList.contains('disabled')) return; // 禁用狀態下不可點擊
-        
+        if (el.classList.contains('disabled')) return;
         const chk = el.querySelector('input');
         chk.checked = !chk.checked;
         el.classList.toggle('active', chk.checked);
+    }
+
+    window.toggleHdrGroup = function(label) {
+        const group = label.parentElement;
+        const chk = label.querySelector('input');
+        chk.checked = !chk.checked;
+        group.classList.toggle('active', chk.checked);
     }
 
     window.setResMode = function(mode) {
         const ultraEl = document.getElementById('ultraBtn');
         const upscaleEl = document.getElementById('upscaleBtn');
         
-        // 如果是禁用狀態，直接返回
         if (mode === 'ultra' && ultraEl.classList.contains('disabled')) {
             alert("此鏡頭不支援 100MP 模式 (需高性能)");
             return;
