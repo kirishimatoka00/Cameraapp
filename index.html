@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (Hybrid)</title>
+    <title>AI 100MP Pro (Final)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -569,7 +569,7 @@
             }
         } catch(e) {
             console.error(e);
-            alert("Error: " + e.message);
+            alert("Error: " + (e.message || e)); // Robust logging
             hud.style.display = 'none';
         }
     }
@@ -604,16 +604,17 @@
     }
 
     // ★★★ 2x AI Upscale (Hybrid: Canvas Scale + OpenCV Enhance) ★★★
-    // REVERTED TO "ORIGINAL STYLE" ROBUST SCALING
+    // FIXED: Use matFromImageData to avoid DOM/OOM issues on detached canvas
     async function processUpscale2x(canvas) {
         hudMain.innerText = "AI Upscaling...";
         hudSub.innerText = "2x Native Super-Res";
         await new Promise(r => setTimeout(r, 50)); 
+        
+        let upCanvas;
 
         try {
-            // Step 1: Robust Canvas Scaling (Like Original Version)
-            // This never fails OOM on simple 2x and works on all cams
-            const upCanvas = document.createElement('canvas');
+            // Step 1: Robust Canvas Scaling (The "Stable" Part)
+            upCanvas = document.createElement('canvas');
             upCanvas.width = canvas.width * 2;
             upCanvas.height = canvas.height * 2;
             const ctx = upCanvas.getContext('2d');
@@ -624,22 +625,25 @@
             ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
             
             // Step 2: Pass the ALREADY SCALED canvas to OpenCV for enhancement
-            // This avoids cv.resize() memory issues
-            const src = cv.imread(upCanvas);
+            // Use getImageData + matFromImageData for 100% stability
+            const imgData = ctx.getImageData(0, 0, upCanvas.width, upCanvas.height);
+            const src = cv.matFromImageData(imgData);
             
             // Run AI Denoise/Sharpen on the upscaled image
             await processEnhancePipeline(src, "2x_AI");
             
             // Cleanup
             src.delete();
-            // upCanvas is garbage collected
             
         } catch(e) {
-            console.error("2x Error", e);
-            alert("2x Error: " + e.message);
-            // Even if OpenCV fails, we might still have the upscaled canvas,
-            // but for safety, fallback to standard if completely broken.
-             processStandard(canvas); 
+            console.error("2x CV Error", e);
+            // FAIL-SAFE: If OpenCV fails (e.g. OOM), we still download the 2x canvas!
+            // This ensures "2x" always works, even without AI enhancement.
+            if(upCanvas) {
+                downloadCanvas(upCanvas, "2x_Basic");
+            } else {
+                alert("2x Error: " + (e.message || e));
+            }
         }
     }
 
@@ -831,6 +835,5 @@
 </script>
 </body>
 </html>
-
 
 
