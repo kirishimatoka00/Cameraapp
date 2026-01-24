@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
-    <title>AI Pro Cam (Ultra Fix)</title>
+    <title>AI Pro Cam (Max Res)</title>
 
-    <!-- 核心運算庫 (OpenCV) -->
+    <!-- 核心運算庫 -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();"></script>
 
     <style>
@@ -36,9 +36,9 @@
             background: rgba(40,40,40,0.9); padding: 6px 12px; border-radius: 20px; 
             font-size: 12px; border: 1px solid #555; color: #ccc; white-space: nowrap; transition: 0.2s; cursor: pointer;
         }
-        .cam-pill.active { background: #fff; color: #000; border-color: #fff; font-weight: bold; box-shadow: 0 0 8px rgba(255,255,255,0.5); }
+        .cam-pill.active { background: #fff; color: #000; border-color: #fff; font-weight: bold; }
         .cam-pill.warn { border-color: var(--warn); color: var(--warn); }
-        .cam-pill.warn.active { background: var(--warn); color: #000; box-shadow: 0 0 8px rgba(255, 215, 0, 0.5); }
+        .cam-pill.warn.active { background: var(--warn); color: #000; }
 
         /* 功能按鈕 */
         .tool-btn {
@@ -183,11 +183,7 @@
         </div>
 
         <div class="sliders-container" id="proPanel">
-            <div class="slider-row">
-                <span class="label">ISO</span>
-                <input type="range" id="isoSlider" min="100" max="3200" step="100" value="100" oninput="updateHW('iso', this.value)">
-                <span id="isoVal" style="width:30px; text-align:right">A</span>
-            </div>
+            <!-- ISO 已移除 -->
             <div class="slider-row">
                 <span class="label">EV</span>
                 <input type="range" id="evSlider" min="-3" max="3" step="0.5" value="0" oninput="updateHW('ev', this.value)">
@@ -229,13 +225,11 @@
     let currentMode = 'PRO';
     let isOpenCvReady = false;
     
-    // 狀態
     let features = { hdr: false, upscaleMode: 0, clahe: true, denoise: true }; 
-    let hwParams = { iso: false, zoom: false, torch: false, exp: false, focus: false };
+    let hwParams = { zoom: false, torch: false, exp: false, focus: false };
     let lightMode = 'off';
     let isManualFocus = false;
     let isSafeMode = false;
-
     let scanContour = null; 
 
     function onOpenCvReady() { isOpenCvReady = true; console.log("OpenCV Ready"); }
@@ -243,7 +237,7 @@
     async function init() {
         try {
             stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720} } 
+                video: { facingMode: 'environment', width: {ideal: 3840}, height: {ideal: 2160} } 
             });
             setupStream(stream);
             
@@ -287,7 +281,6 @@
         try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
         
         const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        hwParams.iso = !!caps.iso;
         hwParams.zoom = !!caps.zoom;
         hwParams.torch = !!caps.torch;
         hwParams.exp = !!caps.exposureCompensation;
@@ -296,13 +289,19 @@
         const zs = document.getElementById('zoomSlider');
         if(hwParams.zoom) { zs.disabled = false; zs.min = caps.zoom.min; zs.max = caps.zoom.max; } else zs.disabled = true;
         
-        const is = document.getElementById('isoSlider');
-        if(hwParams.iso) { is.disabled = false; is.min = caps.iso.min; is.max = caps.iso.max; } else is.disabled = true;
-
         video.onloadedmetadata = () => {
             cOverlay.width = video.videoWidth;
             cOverlay.height = video.videoHeight;
-            infoPill.innerText = `${video.videoWidth}x${video.videoHeight} ${isSafeMode?'(Safe)':''}`;
+            // 讀取 Photo Capabilities 嘗試獲取最高解析度資訊
+            if(imageCapture) {
+                imageCapture.getPhotoCapabilities().then(caps => {
+                    infoPill.innerText = `Max Photo: ${caps.imageWidth.max}x${caps.imageHeight.max}`;
+                }).catch(()=>{
+                    infoPill.innerText = `Stream: ${video.videoWidth}x${video.videoHeight}`;
+                });
+            } else {
+                infoPill.innerText = `${video.videoWidth}x${video.videoHeight}`;
+            }
         };
     }
 
@@ -315,9 +314,8 @@
         if(stream) stream.getTracks().forEach(t => t.stop());
         isSafeMode = isWide;
         
-        let constraints = isWide ? 
-            { video: { deviceId: {exact: id}, width: {ideal: 640}, height: {ideal: 480} } } :
-            { video: { deviceId: {exact: id}, width: {ideal: 3840}, height: {ideal: 2160} } };
+        // 嘗試請求 4K，但主要依賴 takePhoto 抓最大值
+        let constraints = { video: { deviceId: {exact: id}, width: {ideal: 3840}, height: {ideal: 2160} } };
 
         try {
             stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -348,9 +346,6 @@
         if(type === 'zoom') {
             document.getElementById('zoomVal').innerText = parseFloat(val).toFixed(1) + 'x';
             constraints.advanced.push({ zoom: parseFloat(val) });
-        } else if (type === 'iso') {
-            document.getElementById('isoVal').innerText = val;
-            constraints.advanced.push({ iso: parseInt(val) });
         } else if (type === 'ev') {
             document.getElementById('evVal').innerText = val;
             constraints.advanced.push({ exposureCompensation: parseFloat(val) });
@@ -422,7 +417,6 @@
         document.querySelectorAll('.mode-item').forEach(el => 
             el.classList.toggle('active', el.innerText === { 'PRO':'PRO', 'SCAN':'掃描' }[mode]));
         document.getElementById('proPanel').style.display = (mode === 'PRO') ? 'flex' : 'none';
-        
         scanStatus.style.display = (mode === 'SCAN') ? 'block' : 'none';
     }
 
@@ -434,7 +428,6 @@
         requestAnimationFrame(renderLoop);
     }
 
-    // --- 掃描功能 ---
     function runScanPreview() {
         try {
             let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
@@ -481,33 +474,14 @@
         } catch(e) {}
     }
 
-    // --- 拍攝核心 ---
+    // --- 拍攝核心 (強制使用 takePhoto 獲取全像素) ---
     async function captureAction() {
         showMask("處理中...");
         try {
             let canvas;
             
-            if (currentMode === 'SCAN') {
-                if(scanContour && isOpenCvReady) {
-                    canvas = await grabFrame(); 
-                    canvas = performScanCrop(canvas, scanContour);
-                    saveImage(canvas, "Doc");
-                } else {
-                    maskSub.innerText = "全圖強化中...";
-                    canvas = await grabFrame();
-                    if(isOpenCvReady) {
-                        let src = cv.imread(canvas);
-                        cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY);
-                        cv.adaptiveThreshold(src, src, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 5);
-                        cv.imshow(canvas, src);
-                        src.delete();
-                    }
-                    saveImage(canvas, "Doc_Full");
-                }
-                hideMask();
-                return;
-            }
-
+            // 嚴格：直接呼叫 grabFrame (內部使用 takePhoto)
+            // 不再使用 preview 截圖做備案，失敗就報錯
             if (features.hdr) {
                 maskText.innerText = "HDR...";
                 canvas = await captureHDR(parseInt(document.getElementById('hdrCount').value));
@@ -515,21 +489,27 @@
                 canvas = await grabFrame();
             }
 
-            if(isOpenCvReady) {
-                maskSub.innerText = "AI 優化中...";
-                canvas = processEnhance(canvas);
+            if (!canvas) throw new Error("Hardware Capture Failed");
+
+            if (currentMode === 'SCAN') {
+                if(scanContour && isOpenCvReady) {
+                    canvas = performScanCrop(canvas, scanContour);
+                    saveImage(canvas, "Doc");
+                } else {
+                    saveImage(canvas, "Doc_Full");
+                }
+            } else {
+                // Pro Mode
+                if(isOpenCvReady) {
+                    maskSub.innerText = "AI 優化中...";
+                    canvas = processEnhance(canvas);
+                }
+                saveImage(canvas, "Pro");
             }
-            saveImage(canvas, "Pro");
             
         } catch(e) { 
             console.error(e);
-            hideMask();
-            try { 
-                let c = document.createElement('canvas'); 
-                c.width=video.videoWidth; c.height=video.videoHeight; 
-                c.getContext('2d').drawImage(video,0,0);
-                saveImage(c, "Backup");
-            } catch(e2){}
+            alert("拍攝失敗：無法取得硬體照片，請確認瀏覽器支援度");
         }
         hideMask();
     }
@@ -537,7 +517,6 @@
     function performScanCrop(canvas, contourPts) {
         let src = cv.imread(canvas);
         let dst = new cv.Mat();
-        
         let pts = contourPts.sort((a,b) => a.y - b.y);
         let top = pts.slice(0, 2).sort((a,b) => a.x - b.x);
         let bottom = pts.slice(2, 4).sort((a,b) => a.x - b.x);
@@ -551,13 +530,9 @@
         let M = cv.getPerspectiveTransform(srcTri, dstTri);
         
         cv.warpPerspective(src, dst, M, new cv.Size(w, h));
-        cv.cvtColor(dst, dst, cv.COLOR_RGBA2GRAY);
-        cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
-        
         let resC = document.createElement('canvas');
         resC.width = w; resC.height = h;
         cv.imshow(resC, dst);
-        
         src.delete(); dst.delete(); srcTri.delete(); dstTri.delete(); M.delete();
         return resC;
     }
@@ -591,30 +566,40 @@
             }
             planes.set(0, L); cv.merge(planes, lab); cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
 
-            // Upscale Logic with Safety Check
+            // ★★★ 強制 AI 放大邏輯 ★★★
             if(features.upscaleMode > 0) {
-                maskSub.innerText = features.upscaleMode === 2 ? "Generating 100MP..." : "2x AI Upscale...";
-                let scale = features.upscaleMode === 2 ? 3.0 : 2.0;
+                let currentW = dst.cols;
+                let currentH = dst.rows;
                 
-                // ★ 計算預期尺寸，避免記憶體崩潰 ★
-                let targetW = dst.cols * scale;
-                let targetH = dst.rows * scale;
-                let maxSafe = 8192; // 瀏覽器安全極限
+                // Ultra 模式目標：1億畫素 (100MP) -> 約 12000 x 8500
+                // 2x 模式目標：解析度 * 2 (畫素 * 4)
                 
-                if (targetW > maxSafe || targetH > maxSafe) {
-                    console.warn(`Ultra size ${targetW}x${targetH} too big, limiting to safe max.`);
-                    let ratio = Math.min(maxSafe/dst.cols, maxSafe/dst.rows);
-                    scale = ratio;
+                let scale = 2.0;
+                if (features.upscaleMode === 2) {
+                    // 計算達到 1億畫素所需的倍率
+                    // 假設原圖 4000x3000 (12MP) -> 需要放大約 2.88 倍
+                    let targetMP = 100000000;
+                    let currentMP = currentW * currentH;
+                    scale = Math.sqrt(targetMP / currentMP);
+                    maskSub.innerText = `Generating 100MP (${scale.toFixed(1)}x)...`;
+                } else {
+                    maskSub.innerText = "2x AI Upscale...";
                 }
 
                 let upDst = new cv.Mat();
+                // Lanczos4 是目前非深度學習最好的插值算法
                 cv.resize(dst, upDst, new cv.Size(0,0), scale, scale, cv.INTER_LANCZOS4);
                 
+                // 放大後的細節增強 (Unsharp Masking)
+                let upBlur = new cv.Mat();
+                cv.GaussianBlur(upDst, upBlur, new cv.Size(0,0), 3);
+                cv.addWeighted(upDst, 1.5, upBlur, -0.5, 0, upDst); // 強力銳化
+
                 let newC = document.createElement('canvas');
                 newC.width = upDst.cols; newC.height = upDst.rows;
                 cv.imshow(newC, upDst);
                 cvs = newC;
-                upDst.delete();
+                upDst.delete(); upBlur.delete();
             } else {
                 cv.imshow(cvs, dst);
             }
@@ -624,19 +609,27 @@
         return cvs;
     }
 
+    // ★★★ 強制使用硬體拍照，不支援 Video 截圖 ★★★
     async function grabFrame() {
-        if(imageCapture) {
-            try {
-                const blob = await imageCapture.takePhoto(lightMode === 'flash' ? {fillLightMode: 'flash'} : undefined);
-                return await createImageBitmap(blob);
-            } catch(e) {
-                console.warn("takePhoto error, fallback to grabFrame", e);
-            }
+        if(!imageCapture) throw new Error("ImageCapture API not supported");
+        
+        // 取得硬體最大能力
+        const caps = await imageCapture.getPhotoCapabilities();
+        const settings = {
+            imageWidth: caps.imageWidth.max,
+            imageHeight: caps.imageHeight.max
+        };
+        
+        if(lightMode === 'flash') settings.fillLightMode = 'flash';
+
+        try {
+            const blob = await imageCapture.takePhoto(settings);
+            return await createImageBitmap(blob);
+        } catch(e) {
+            // 如果指定解析度失敗，嘗試不帶參數 (自動最大)
+            const blob = await imageCapture.takePhoto();
+            return await createImageBitmap(blob);
         }
-        const c = document.createElement('canvas');
-        c.width = video.videoWidth; c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
-        return c;
     }
 
     async function captureHDR(count) {
@@ -646,11 +639,12 @@
             let ev = startEv + i;
             maskSub.innerText = `HDR ${i+1}/${count}`;
             if(hwParams.exp) await videoTrack.applyConstraints({advanced:[{exposureCompensation: ev}]});
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 200)); // 等待曝光穩定
             frames.push(await grabFrame());
         }
         if(hwParams.exp) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
         
+        // 合成邏輯
         let base = frames[Math.floor(count/2)];
         if(base instanceof ImageBitmap) {
             let c = document.createElement('canvas');
@@ -681,6 +675,5 @@
 </script>
 </body>
 </html>
-
 
 
