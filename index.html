@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (Smart)</title>
+    <title>AI 100MP Pro (Hybrid)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -603,29 +603,43 @@
         return c;
     }
 
-    // ★★★ 2x AI Upscale (FIXED: Explicit flow to ensure size) ★★★
+    // ★★★ 2x AI Upscale (Hybrid: Canvas Scale + OpenCV Enhance) ★★★
+    // REVERTED TO "ORIGINAL STYLE" ROBUST SCALING
     async function processUpscale2x(canvas) {
         hudMain.innerText = "AI Upscaling...";
-        hudSub.innerText = "2x Lanczos Super-Res";
+        hudSub.innerText = "2x Native Super-Res";
         await new Promise(r => setTimeout(r, 50)); 
 
         try {
-            const src = cv.imread(canvas);
-            const dst = new cv.Mat();
+            // Step 1: Robust Canvas Scaling (Like Original Version)
+            // This never fails OOM on simple 2x and works on all cams
+            const upCanvas = document.createElement('canvas');
+            upCanvas.width = canvas.width * 2;
+            upCanvas.height = canvas.height * 2;
+            const ctx = upCanvas.getContext('2d');
             
-            // 1. Resize (Upscale)
-            const newSize = new cv.Size(src.cols * 2, src.rows * 2);
-            cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
-            src.delete(); // Free original
-
-            // 2. Enhance & Export (Pass the Resized Mat directly)
-            await processEnhancePipeline(dst, "2x_AI");
-            dst.delete();
+            // High Quality Bicubic/Lanczos (Browser implementation)
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
+            
+            // Step 2: Pass the ALREADY SCALED canvas to OpenCV for enhancement
+            // This avoids cv.resize() memory issues
+            const src = cv.imread(upCanvas);
+            
+            // Run AI Denoise/Sharpen on the upscaled image
+            await processEnhancePipeline(src, "2x_AI");
+            
+            // Cleanup
+            src.delete();
+            // upCanvas is garbage collected
             
         } catch(e) {
             console.error("2x Error", e);
-            alert("2x AI Error: " + e.message); // Explicit alert
-            processStandard(canvas); 
+            alert("2x Error: " + e.message);
+            // Even if OpenCV fails, we might still have the upscaled canvas,
+            // but for safety, fallback to standard if completely broken.
+             processStandard(canvas); 
         }
     }
 
