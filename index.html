@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
-    <title>AI Pro Cam (No Gesture)</title>
+    <title>AI Pro Cam (Ultra Fix)</title>
 
     <!-- 核心運算庫 (OpenCV) -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();"></script>
@@ -47,7 +47,7 @@
         }
         .tool-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.15); font-weight: bold; }
         .tool-btn.hdr-active { border-color: var(--warn); color: var(--warn); background: rgba(255, 215, 0, 0.15); }
-        .tool-btn.ultra-active { border-color: var(--ultra); color: var(--ultra); background: rgba(255, 0, 255, 0.15); text-shadow: 0 0 5px rgba(255,0,255,0.5); }
+        .tool-btn.ultra-active { border-color: var(--ultra); color: var(--ultra); background: rgba(255, 0, 255, 0.15); text-shadow: 0 0 5px rgba(255,0,255,0.5); font-weight: bold; }
 
         .fs-btn {
             width: 32px; height: 32px; border-radius: 50%; background: rgba(50,50,50,0.8);
@@ -229,6 +229,7 @@
     let currentMode = 'PRO';
     let isOpenCvReady = false;
     
+    // 狀態
     let features = { hdr: false, upscaleMode: 0, clahe: true, denoise: true }; 
     let hwParams = { iso: false, zoom: false, torch: false, exp: false, focus: false };
     let lightMode = 'off';
@@ -433,6 +434,7 @@
         requestAnimationFrame(renderLoop);
     }
 
+    // --- 掃描功能 ---
     function runScanPreview() {
         try {
             let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
@@ -589,16 +591,25 @@
             }
             planes.set(0, L); cv.merge(planes, lab); cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
 
+            // Upscale Logic with Safety Check
             if(features.upscaleMode > 0) {
                 maskSub.innerText = features.upscaleMode === 2 ? "Generating 100MP..." : "2x AI Upscale...";
                 let scale = features.upscaleMode === 2 ? 3.0 : 2.0;
+                
+                // ★ 計算預期尺寸，避免記憶體崩潰 ★
+                let targetW = dst.cols * scale;
+                let targetH = dst.rows * scale;
+                let maxSafe = 8192; // 瀏覽器安全極限
+                
+                if (targetW > maxSafe || targetH > maxSafe) {
+                    console.warn(`Ultra size ${targetW}x${targetH} too big, limiting to safe max.`);
+                    let ratio = Math.min(maxSafe/dst.cols, maxSafe/dst.rows);
+                    scale = ratio;
+                }
+
                 let upDst = new cv.Mat();
                 cv.resize(dst, upDst, new cv.Size(0,0), scale, scale, cv.INTER_LANCZOS4);
                 
-                if (upDst.cols > 16384 || upDst.rows > 16384) {
-                    cv.resize(dst, upDst, new cv.Size(0,0), 2.0, 2.0, cv.INTER_LANCZOS4); 
-                }
-
                 let newC = document.createElement('canvas');
                 newC.width = upDst.cols; newC.height = upDst.rows;
                 cv.imshow(newC, upDst);
@@ -665,7 +676,6 @@
 
     function showMask(t) { mask.style.display = 'flex'; maskText.innerText = t; maskSub.innerText = ""; }
     function hideMask() { mask.style.display = 'none'; }
-    function showToast(m) { alert(m); } 
 
     init();
 </script>
