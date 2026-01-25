@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (HDR Fixed)</title>
+    <title>AI Pro (Telephoto Unlock)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -317,10 +317,12 @@
             const cams = devices.filter(d => d.kind === 'videoinput');
             
             cameraSelect.innerHTML = '';
+            // Detailed Enumeration
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
+                // Add explicit ID to label to help user find Telephoto
+                opt.text = (d.label || `Camera ${i}`) + ` (ID: ${i})`;
                 opt.dataset.index = i;
                 cameraSelect.appendChild(opt);
             });
@@ -574,7 +576,7 @@
                         ]});
                     }
                     
-                    // FIXED: Increase wait time to 400ms for hardware to settle
+                    // Wait for hardware adjustment
                     await new Promise(r => setTimeout(r, 400));
                     frames.push(await grabFrame());
                 }
@@ -585,7 +587,6 @@
                 }
                 
                 hudMain.innerText = "Smart HDR Merging...";
-                // Use OpenCV merging for better quality
                 baseCanvas = await mergeHDROpenCV(frames);
             } else {
                 const opts = (window.currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
@@ -630,7 +631,6 @@
         const w = frames[0].width;
         const h = frames[0].height;
         
-        // Convert all frames to Mats
         let mats = [];
         for(let f of frames) {
             mats.push(cv.imread(f));
@@ -642,27 +642,22 @@
         // Start with center frame
         mats[centerIdx].convertTo(res, cv.CV_32F);
 
-        // Simple Weighted Fusion Logic:
-        // Darker frames contribute to bright areas
-        // Brighter frames contribute to dark areas
-        // Since Mertens fusion is not in standard OpenCV.js build, we simulate a simple blend
-        
+        // Weighted Fusion Strategy
         // Blend in Underexposed (Recover Highlights)
         for(let i=0; i<centerIdx; i++) {
             mats[i].convertTo(temp, cv.CV_32F);
-            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
+            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); 
         }
 
         // Blend in Overexposed (Recover Shadows)
         for(let i=centerIdx+1; i<frames.length; i++) {
             mats[i].convertTo(temp, cv.CV_32F);
-            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
+            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); 
         }
 
         // Convert back to 8UC4
         res.convertTo(temp, cv.CV_8UC4);
         
-        // Output to Canvas
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
         cv.imshow(c, temp);
@@ -674,6 +669,7 @@
         return c;
     }
 
+    // --- Upscale 2x AI (Logic: Sync HW Zoom) ---
     async function processUpscale2x(canvas) {
         hudMain.innerText = "AI Upscaling...";
         hudSub.innerText = "2x Native Super-Res";
@@ -772,7 +768,6 @@
 
         // Apply CLAHE always for HDR or if checked
         if(document.getElementById('claheToggle').checked || document.getElementById('hdrToggle').checked) {
-            // HDR needs stronger CLAHE
             const clipLimit = document.getElementById('hdrToggle').checked ? 3.0 : 2.0;
             const clahe = new cv.CLAHE(clipLimit, new cv.Size(8, 8));
             clahe.apply(L, L);
@@ -836,6 +831,7 @@
         group.classList.toggle('active', chk.checked);
     }
 
+    // New 2x AI Logic: Force Hardware Zoom
     window.setResMode = function(mode) {
         const ultraEl = document.getElementById('ultraBtn');
         const upscaleEl = document.getElementById('upscaleBtn');
@@ -851,9 +847,17 @@
         if(mode === 'ultra') {
             ultraChk.checked = !ultraChk.checked;
             upscaleChk.checked = false; 
+            // Reset hardware zoom for 100MP
+            if(videoTrack) videoTrack.applyConstraints({advanced:[{zoom: 1.0}]});
         } else if (mode === 'upscale') {
             upscaleChk.checked = !upscaleChk.checked;
-            ultraChk.checked = false; 
+            ultraChk.checked = false;
+            // Force Hardware Zoom to 2.0 to activate telephoto
+            if(upscaleChk.checked && videoTrack && capabilities.zoom) {
+                videoTrack.applyConstraints({advanced:[{zoom: 2.0}]});
+            } else if (!upscaleChk.checked && videoTrack) {
+                videoTrack.applyConstraints({advanced:[{zoom: 1.0}]});
+            }
         }
 
         ultraEl.classList.toggle('active', ultraChk.checked);
