@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Pro (Sensor Crop)</title>
+    <title>AI Pro (Combo Zoom)</title>
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         :root { --accent: #00d2ff; --warn: #ffd700; --active: #00ff88; --bg: #000; --panel: #111; }
@@ -22,7 +22,7 @@
             width: 32px; height: 32px; border-radius: 8px; display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 16px;
         }
         
-        select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 12px; flex-grow: 1; max-width: 140px; }
+        select { background: #222; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 6px; font-size: 12px; flex-grow: 1; max-width: 140px; text-overflow: ellipsis; }
         
         .engine-status { font-size: 10px; color: #666; display: flex; align-items: center; gap: 4px; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
         .engine-status.ready { color: var(--accent); border-color: var(--accent); }
@@ -67,7 +67,11 @@
             display: flex; justify-content: center; align-items: center; 
             touch-action: none;
         }
-        video { width: 100%; height: 100%; object-fit: contain; }
+        video { 
+            width: 100%; height: 100%; object-fit: contain; 
+            transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); 
+            transform-origin: center center;
+        }
 
         #status-pill {
             position: absolute; top: 15px; left: 15px;
@@ -129,10 +133,15 @@
         .ac-sharp input { accent-color: #fff; }
 
         .af-btn {
-            background: #333; color: #fff; border: 1px solid #555; padding: 2px 0; border-radius: 4px; font-size: 10px; cursor: pointer; width: 40px; text-align: center;
+            background: #333; color: #fff; border: 1px solid #555; padding: 2px 0; border-radius: 4px; font-size: 10px; cursor: pointer; width: 40px; text-align: center; user-select: none;
         }
         .af-btn.tracking { background: var(--active); color: #000; font-weight: bold; border-color: #fff; animation: pulse 2s infinite; }
         .af-btn.manual { background: var(--warn); color: #000; font-weight: bold; }
+
+        /* 2x Sensor Button */
+        #sensorBtn.active {
+            background: #ffd700; color: #000; font-weight: bold; border-color: #ffd700;
+        }
 
         .shutter-col { display: flex; align-items: center; justify-content: center; }
         .shutter {
@@ -142,14 +151,15 @@
             cursor: pointer; transition: 0.1s; position: relative;
             box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
         }
-        .shutter.ultra-mode {
-            background: radial-gradient(circle, #fff 30%, #ff0055 100%);
-            box-shadow: 0 0 25px rgba(255, 0, 85, 0.4);
+        /* Combined Status Styles */
+        .shutter.ultra-mode { background: radial-gradient(circle, #fff 30%, #ff0055 100%); box-shadow: 0 0 25px rgba(255, 0, 85, 0.4); }
+        .shutter.upscale-mode { background: radial-gradient(circle, #fff 30%, var(--active) 100%); box-shadow: 0 0 25px rgba(0, 255, 136, 0.4); }
+        /* When Sensor Mode is active, add a gold ring */
+        .shutter.sensor-mode::after {
+            content: ''; position: absolute; inset: -6px; border-radius: 50%;
+            border: 3px solid #ffd700; pointer-events: none;
         }
-        .shutter.upscale-mode {
-            background: radial-gradient(circle, #fff 30%, var(--active) 100%);
-            box-shadow: 0 0 25px rgba(0, 255, 136, 0.4);
-        }
+        
         .shutter:active { transform: scale(0.92); }
         .shutter.disabled { filter: grayscale(1); opacity: 0.5; pointer-events: none; }
 
@@ -176,13 +186,13 @@
             <label class="toggle-btn ultra-btn" id="ultraBtn" onclick="setResMode('ultra')">
                 <input type="checkbox" id="ultraToggle"> 100MP
             </label>
+            
             <label class="toggle-btn upscale-btn" id="upscaleBtn" onclick="setResMode('upscale')">
-                <input type="checkbox" id="upscaleToggle"> 2x Sensor
+                <input type="checkbox" id="upscaleToggle"> 2x AI
             </label>
 
             <div style="width:1px;height:20px;background:#333;margin:0 4px;"></div>
 
-            <!-- HDR Group -->
             <div id="hdrGroup" class="btn-group active">
                 <label class="toggle-btn" onclick="toggleHdrGroup(this)">
                     <input type="checkbox" id="hdrToggle" checked> HDR
@@ -210,11 +220,9 @@
         <video id="videoPreview" autoplay playsinline muted></video>
         <div id="status-pill">Ready</div>
         
-        <!-- 對焦 UI -->
         <div id="focus-reticle"></div>
         <div id="tracker-box"></div>
 
-        <!-- 處理 HUD -->
         <div id="hud">
             <div class="spinner"></div>
             <div class="hud-text">
@@ -244,6 +252,13 @@
             <div class="slider-row ac-zoom">
                 <span class="label">Zoom</span>
                 <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
+                
+                <!-- 2x Sensor Button -->
+                <div id="sensorBtn" class="af-btn" style="width: 40px; margin: 0 6px;" onclick="setResMode('sensor')">
+                    2xS
+                    <input type="checkbox" id="sensorToggle" style="display:none">
+                </div>
+
                 <span id="zoomText" class="value-disp">1x</span>
             </div>
             
@@ -272,6 +287,7 @@
     const cvStatus = document.getElementById('cvStatus');
     const shutterBtn = document.getElementById('shutterBtn');
     
+    // Controls
     const focusSlider = document.getElementById('focusSlider');
     const zoomSlider = document.getElementById('zoomSlider');
     const afBtn = document.getElementById('afBtn');
@@ -307,7 +323,7 @@
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId;
-                opt.text = d.label || `Camera ${i}`;
+                opt.text = (d.label || `Camera ${i}`) + ` (ID: ${i})`;
                 opt.dataset.index = i;
                 cameraSelect.appendChild(opt);
             });
@@ -366,6 +382,13 @@
         const ultraBtn = document.getElementById('ultraBtn');
         const ultraToggle = document.getElementById('ultraToggle');
         
+        // Reset 2x Sensor Preview
+        if(document.getElementById('sensorToggle').checked) {
+             video.style.transform = 'scale(2)';
+        } else {
+             video.style.transform = 'none';
+        }
+
         if (isSafeMode || currentCameraIndex === 2) {
             if (ultraToggle.checked) {
                 ultraToggle.checked = false;
@@ -529,6 +552,7 @@
         prevFrameData = null;
     }
 
+    // --- Capture Flow ---
     async function captureFlow() {
         if(!isOpenCvReady) { alert("Engine not ready."); return; }
 
@@ -538,6 +562,7 @@
 
         const isHdr = document.getElementById('hdrToggle').checked;
         const isUltra = document.getElementById('ultraToggle').checked;
+        const isSensor = document.getElementById('sensorToggle').checked;
         const isUpscale = document.getElementById('upscaleToggle').checked;
 
         try {
@@ -551,7 +576,6 @@
                 for(let i=0; i<count; i++) {
                     const ev = (i - centerIndex) * step;
                     hudSub.innerText = `HDR EV ${ev.toFixed(1)} (${i+1}/${count})`;
-                    
                     if(capabilities.exposureCompensation) {
                         await videoTrack.applyConstraints({advanced:[
                             {exposureMode: 'continuous', exposureCompensation: ev}
@@ -564,7 +588,6 @@
                 if(capabilities.exposureCompensation) {
                     await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
                 }
-                
                 hudMain.innerText = "Smart HDR Merging...";
                 baseCanvas = await mergeHDROpenCV(frames);
             } else {
@@ -572,14 +595,38 @@
                 baseCanvas = await grabFrame(true, opts);
             }
 
+            // 1. Crop if Sensor Mode is active
+            if (isSensor) {
+                hudMain.innerText = "Sensor Cropping...";
+                const w = baseCanvas.width;
+                const h = baseCanvas.height;
+                const cw = Math.floor(w / 2);
+                const ch = Math.floor(h / 2);
+                const cx = Math.floor((w - cw) / 2);
+                const cy = Math.floor((h - ch) / 2);
+
+                const cropCanvas = document.createElement('canvas');
+                cropCanvas.width = cw;
+                cropCanvas.height = ch;
+                cropCanvas.getContext('2d').drawImage(baseCanvas, cx, cy, cw, ch, 0, 0, cw, ch);
+                baseCanvas = cropCanvas; // Replace base with crop
+            }
+
+            // 2. Output Processing
             if (isUltra) {
+                // 100MP Logic (Scale 3x)
                 await processUltra100MP(baseCanvas);
             } else if (isUpscale) {
-                // Route to the new Sensor Crop logic
-                await processSensorCrop2x(baseCanvas);
+                // 2x AI Logic (Scale 2x)
+                await processUpscale2x(baseCanvas);
+            } else if (isSensor) {
+                // Sensor Mode Only (Scale 2x to restore original dimensions)
+                await processUpscale2x(baseCanvas);
             } else {
+                // Standard Logic
                 await processStandard(baseCanvas);
             }
+
         } catch(e) {
             console.error(e);
             alert("Error: " + (e.message || e));
@@ -637,51 +684,33 @@
         return c;
     }
 
-    // ★★★ NEW: Sensor Crop + AI Reconstruction (Virtual Telephoto) ★★★
-    async function processSensorCrop2x(canvas) {
-        hudMain.innerText = "Sensor Crop...";
-        hudSub.innerText = "Simulating Optical Zoom";
+    // ★★★ 2x Upscale Logic (Unified) ★★★
+    async function processUpscale2x(canvas) {
+        hudMain.innerText = "AI Upscaling...";
+        hudSub.innerText = "2x Lanczos Super-Res";
         await new Promise(r => setTimeout(r, 50)); 
         
         try {
-            // 1. Calculate Crop Region (Center 50%)
-            const w = canvas.width;
-            const h = canvas.height;
-            const cw = Math.floor(w / 2);
-            const ch = Math.floor(h / 2);
-            const cx = Math.floor((w - cw) / 2);
-            const cy = Math.floor((h - ch) / 2);
-
-            // 2. Perform High-Res Crop
-            const cropCanvas = document.createElement('canvas');
-            cropCanvas.width = cw;
-            cropCanvas.height = ch;
-            cropCanvas.getContext('2d').drawImage(canvas, cx, cy, cw, ch, 0, 0, cw, ch);
-
-            // 3. AI Upscale using OpenCV Lanczos-4 (Reconstruct to original size)
-            hudMain.innerText = "AI Restoring...";
-            const src = cv.imread(cropCanvas);
-            const dst = new cv.Mat();
-            const newSize = new cv.Size(w, h); // Scale back to full size
+            // Robust Canvas Scaling
+            const upCanvas = document.createElement('canvas');
+            upCanvas.width = canvas.width * 2;
+            upCanvas.height = canvas.height * 2;
+            const ctx = upCanvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
             
-            cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
+            // Enhance
+            const imgData = ctx.getImageData(0, 0, upCanvas.width, upCanvas.height);
+            const src = cv.matFromImageData(imgData);
+            
+            // Differentiate naming to help user know if it was Crop or Full Upscale
+            const prefix = document.getElementById('sensorToggle').checked ? "2x_Sensor" : "2x_AI";
+            await processEnhancePipeline(src, prefix);
             src.delete();
-
-            // 4. Enhance Details (Sharpen + Denoise)
-            // Use slightly stronger sharpening for crop to fake optical details
-            const blurred = new cv.Mat();
-            cv.GaussianBlur(dst, blurred, new cv.Size(0, 0), 3);
-            cv.addWeighted(dst, 1.6, blurred, -0.6, 0, dst); // Stronger sharpen
-            blurred.delete();
-
-            // 5. Hand over to pipeline for final CLAHE/Color denoise
-            await processEnhancePipeline(dst, "2x_SensorAI");
-            dst.delete();
-
         } catch(e) {
-            console.error("Sensor Crop Error", e);
-            alert("Crop Error: " + e.message);
-            processStandard(canvas); 
+            console.error("2x CV Error", e);
+            processStandard(canvas);
         }
     }
 
@@ -691,17 +720,18 @@
         try {
             const src = cv.imread(canvas);
             const srcPixels = src.cols * src.rows;
+            // Check pixel count. If cropping was done, srcPixels is smaller, so Lite Mode check is safer.
             const targetPixels = srcPixels * 9; 
             const useLiteMode = targetPixels > 50000000;
             
             const dst = new cv.Mat();
             const newSize = new cv.Size(src.cols * 3, src.rows * 3);
-            hudSub.innerText = useLiteMode ? "100MP Upscale (Lite Mode)" : "100MP Upscale + HF Boost";
+            hudSub.innerText = useLiteMode ? "100MP Lite (Lanczos)" : "100MP Ultra (HF Boost)";
             cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
             src.delete(); 
 
             if (!useLiteMode) {
-                hudSub.innerText = "Enhancing Texture...";
+                hudSub.innerText = "Detail Enhancement...";
                 await new Promise(r => setTimeout(r, 50));
                 const blurred = new cv.Mat();
                 cv.GaussianBlur(dst, blurred, new cv.Size(0, 0), 5); 
@@ -713,10 +743,12 @@
             outCanvas.width = dst.cols; outCanvas.height = dst.rows;
             cv.imshow(outCanvas, dst); 
             dst.delete();
-            downloadCanvas(outCanvas, "Ultra_100MP");
+            
+            const prefix = document.getElementById('sensorToggle').checked ? "Ultra_Sensor" : "Ultra_100MP";
+            downloadCanvas(outCanvas, prefix);
         } catch(e) {
             alert("Memory Error. Switching to standard 2x mode.");
-            processSensorCrop2x(canvas); 
+            processUpscale2x(canvas); 
         }
     }
 
@@ -822,41 +854,60 @@
 
     window.setResMode = function(mode) {
         const ultraEl = document.getElementById('ultraBtn');
+        const sensorEl = document.getElementById('sensorBtn'); 
         const upscaleEl = document.getElementById('upscaleBtn');
         
+        const ultraChk = document.getElementById('ultraToggle');
+        const sensorChk = document.getElementById('sensorToggle');
+        const upscaleChk = document.getElementById('upscaleToggle');
+
         if (mode === 'ultra' && ultraEl.classList.contains('disabled')) {
             alert("此鏡頭不支援 100MP 模式 (需高性能)");
             return;
         }
 
-        const ultraChk = document.getElementById('ultraToggle');
-        const upscaleChk = document.getElementById('upscaleToggle');
-
-        if(mode === 'ultra') {
+        // Logic: Ultra/Upscale are mutually exclusive. Sensor is independent.
+        if (mode === 'ultra') {
             ultraChk.checked = !ultraChk.checked;
-            upscaleChk.checked = false; 
+            upscaleChk.checked = false; // Disable Upscale if Ultra
         } else if (mode === 'upscale') {
             upscaleChk.checked = !upscaleChk.checked;
-            ultraChk.checked = false; 
+            ultraChk.checked = false; // Disable Ultra if Upscale
+        } else if (mode === 'sensor') {
+            sensorChk.checked = !sensorChk.checked;
+            // Independent
         }
 
+        // Visual Updates
         ultraEl.classList.toggle('active', ultraChk.checked);
+        sensorEl.classList.toggle('active', sensorChk.checked);
         upscaleEl.classList.toggle('active', upscaleChk.checked);
 
-        shutterBtn.classList.remove('ultra-mode', 'upscale-mode');
+        shutterBtn.classList.remove('ultra-mode', 'sensor-mode', 'upscale-mode');
         
-        // Sensor Crop Mode: Force Zoom 1.0 (Optical Quality)
-        if(videoTrack) videoTrack.applyConstraints({advanced:[{zoom: 1.0}]});
+        // Reset Video Preview Logic
+        video.style.transform = 'none';
 
-        if (ultraChk.checked) {
-            shutterBtn.classList.add('ultra-mode');
+        // Apply Logic Effects
+        if (sensorChk.checked) {
+            shutterBtn.classList.add('sensor-mode');
+            // Force 2x Preview
+            video.style.transform = 'scale(2)';
+            // Force Hardware Zoom to 1.0 (to get raw pixels for crop)
             document.getElementById('zoomSlider').disabled = true;
-        } else if (upscaleChk.checked) {
-            shutterBtn.classList.add('upscale-mode');
-            // Disable manual zoom in "2x Mode" to prevent digital degradation
-            document.getElementById('zoomSlider').disabled = true;
+            if(videoTrack) videoTrack.applyConstraints({advanced:[{zoom: 1.0}]});
         } else {
-             document.getElementById('zoomSlider').disabled = !capabilities.zoom;
+            // Restore Zoom Slider
+            document.getElementById('zoomSlider').disabled = !capabilities.zoom;
+        }
+
+        // Overwrite Shutter Color priority
+        if (ultraChk.checked) {
+            shutterBtn.classList.remove('sensor-mode', 'upscale-mode');
+            shutterBtn.classList.add('ultra-mode');
+        } else if (upscaleChk.checked) {
+            shutterBtn.classList.remove('sensor-mode');
+            shutterBtn.classList.add('upscale-mode');
         }
     }
     
@@ -865,5 +916,6 @@
 </script>
 </body>
 </html>
+
 
 
