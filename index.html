@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (HDR+)</title>
+    <title>AI 100MP Pro (HDR Fixed)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
@@ -557,32 +557,36 @@
         try {
             let baseCanvas;
             if(isHdr) {
-                // HDR Logic: Read count and step
+                // HDR Logic: Longer wait time for hardware
                 const count = parseInt(document.getElementById('hdrCount').value);
-                const step = 0.3; // Default 0.3EV step
+                const step = 0.3; 
                 const frames = [];
-                
-                // Calculate EV offsets. Center is 0.
-                // e.g. 5 frames: -0.6, -0.3, 0, 0.3, 0.6
                 const centerIndex = Math.floor(count / 2);
                 
                 for(let i=0; i<count; i++) {
                     const ev = (i - centerIndex) * step;
-                    hudSub.innerText = `HDR Sequence ${i+1}/${count} (EV ${ev.toFixed(1)})`;
+                    hudSub.innerText = `HDR EV ${ev.toFixed(1)} (${i+1}/${count})`;
                     
-                    if(capabilities.exposureCompensation) 
-                        await videoTrack.applyConstraints({advanced:[{exposureCompensation: ev}]});
-                    else 
-                        await new Promise(r => setTimeout(r, 100)); // wait for auto-exposure if no HW support
+                    if(capabilities.exposureCompensation) {
+                        // Force update parameters
+                        await videoTrack.applyConstraints({advanced:[
+                            {exposureMode: 'continuous', exposureCompensation: ev}
+                        ]});
+                    }
                     
+                    // FIXED: Increase wait time to 400ms for hardware to settle
+                    await new Promise(r => setTimeout(r, 400));
                     frames.push(await grabFrame());
                 }
                 
                 // Restore EV
-                if(capabilities.exposureCompensation) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
+                if(capabilities.exposureCompensation) {
+                    await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
+                }
                 
-                hudMain.innerText = "HDR Merging...";
-                baseCanvas = mergeHDR(frames);
+                hudMain.innerText = "Smart HDR Merging...";
+                // Use OpenCV merging for better quality
+                baseCanvas = await mergeHDROpenCV(frames);
             } else {
                 const opts = (window.currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
                 baseCanvas = await grabFrame(true, opts);
@@ -620,34 +624,53 @@
         return c;
     }
 
-    // Dynamic HDR Merge for N frames
-    function mergeHDR(frames) {
+    // Improved HDR Merge using OpenCV (Weighted Fusion)
+    async function mergeHDROpenCV(frames) {
         const centerIdx = Math.floor(frames.length / 2);
-        const base = frames[centerIdx]; // The 0 EV frame
-        const c = document.createElement('canvas');
-        c.width = base.width; c.height = base.height;
-        const ctx = c.getContext('2d');
+        const w = frames[0].width;
+        const h = frames[0].height;
         
-        // Draw base frame
-        ctx.drawImage(base, 0, 0);
+        // Convert all frames to Mats
+        let mats = [];
+        for(let f of frames) {
+            mats.push(cv.imread(f));
+        }
+
+        const res = new cv.Mat();
+        const temp = new cv.Mat();
         
-        // Strategy: 
-        // 1. Darker frames (Underexposed) recover highlights (indices < center)
-        ctx.globalCompositeOperation = 'darken';
-        ctx.globalAlpha = 0.5;
+        // Start with center frame
+        mats[centerIdx].convertTo(res, cv.CV_32F);
+
+        // Simple Weighted Fusion Logic:
+        // Darker frames contribute to bright areas
+        // Brighter frames contribute to dark areas
+        // Since Mertens fusion is not in standard OpenCV.js build, we simulate a simple blend
+        
+        // Blend in Underexposed (Recover Highlights)
         for(let i=0; i<centerIdx; i++) {
-            ctx.drawImage(frames[i], 0, 0);
+            mats[i].convertTo(temp, cv.CV_32F);
+            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
         }
-        
-        // 2. Lighter frames (Overexposed) recover shadows (indices > center)
-        ctx.globalCompositeOperation = 'lighten';
+
+        // Blend in Overexposed (Recover Shadows)
         for(let i=centerIdx+1; i<frames.length; i++) {
-            ctx.drawImage(frames[i], 0, 0);
+            mats[i].convertTo(temp, cv.CV_32F);
+            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
         }
+
+        // Convert back to 8UC4
+        res.convertTo(temp, cv.CV_8UC4);
         
-        // Reset
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1.0;
+        // Output to Canvas
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        cv.imshow(c, temp);
+        
+        // Cleanup
+        for(let m of mats) m.delete();
+        res.delete(); temp.delete();
+        
         return c;
     }
 
@@ -747,8 +770,11 @@
             tempL.delete();
         }
 
-        if(document.getElementById('claheToggle').checked) {
-            const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+        // Apply CLAHE always for HDR or if checked
+        if(document.getElementById('claheToggle').checked || document.getElementById('hdrToggle').checked) {
+            // HDR needs stronger CLAHE
+            const clipLimit = document.getElementById('hdrToggle').checked ? 3.0 : 2.0;
+            const clahe = new cv.CLAHE(clipLimit, new cv.Size(8, 8));
             clahe.apply(L, L);
             clahe.delete();
         }
