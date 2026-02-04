@@ -194,8 +194,8 @@
             <div class="storage-option" id="opt-local" onclick="setStorageOption('local')">
                 <div class="icon">📁</div>
                 <div class="details">
-                    <h4>本地資料夾 / 網路硬碟</h4>
-                    <p>直接存入指定的資料夾或已掛載的 NAS 網路磁碟。</p>
+                    <h4>本地資料夾 / 網絡硬碟 (NAS)</h4>
+                    <p>選擇掛載的網絡硬碟資料夾，照片將直接寫入。</p>
                 </div>
             </div>
 
@@ -203,7 +203,7 @@
                 <div class="icon">📤</div>
                 <div class="details">
                     <h4>系統分享 (Google Space/硬碟)</h4>
-                    <p>拍完後彈出分享視窗，直接上傳雲端或傳送至群組。</p>
+                    <p>拍完後彈出分享視窗，直接傳送至 Space 或 Drive。</p>
                 </div>
             </div>
 
@@ -211,7 +211,7 @@
                 <div class="icon">☁️</div>
                 <div class="details">
                     <h4>雲端處理紀錄</h4>
-                    <p>開啟同步：拍攝的時間與設定將備份至雲端空間。</p>
+                    <p>開啟同步：將拍攝元數據與處理紀錄備份至雲端。</p>
                 </div>
             </div>
         </div>
@@ -257,12 +257,16 @@
     <canvas id="cMotion" width="64" height="64"></canvas>
 
 <script type="module">
-    // --- Firebase / Storage State ---
+    // --- Global Storage State ---
+    window.storageConfig = {
+        mode: 'download',
+        directoryHandle: null
+    };
+
     let db, auth, user, appId;
-    let storageMode = 'download'; // 'download', 'local', 'share', 'cloud'
-    let directoryHandle = null;
 
     async function initCloud() {
+        if (!window.fbUtils) return;
         const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.fbUtils;
         const firebaseConfig = JSON.parse(__firebase_config);
         const app = initializeApp(firebaseConfig);
@@ -286,26 +290,32 @@
     window.setStorageOption = async function(mode) {
         if (mode === 'local') {
             if (!('showDirectoryPicker' in window)) {
-                alert("瀏覽器不支援本地磁碟寫入，改用預設下載。");
+                alert("此瀏覽器/環境不支援直接寫入資料夾。將回退至下載模式。");
                 return;
             }
             try {
-                directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                storageMode = 'local';
-            } catch (e) { return; }
+                // 請求用戶選擇 NAS 掛載路徑或本地資料夾
+                window.storageConfig.directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                window.storageConfig.mode = 'local';
+            } catch (e) { 
+                console.warn("User cancelled directory picker");
+                return; 
+            }
         } else {
-            storageMode = mode;
+            window.storageConfig.mode = mode;
         }
 
+        // UI 更新
         document.querySelectorAll('.storage-option').forEach(opt => opt.classList.remove('selected'));
         document.getElementById(`opt-${mode}`).classList.add('selected');
-        document.getElementById('currentStorageMode').innerText = 
-            mode === 'download' ? '下載' : (mode === 'local' ? '本地' : (mode === 'share' ? '分享' : '雲端'));
+        
+        const modeNames = { download: '下載', local: '本地/NAS', share: '分享', cloud: '雲端' };
+        document.getElementById('currentStorageMode').innerText = modeNames[mode];
         
         if(mode !== 'cloud') setTimeout(toggleStoragePanel, 300);
     };
 
-    // --- Original Logic Wrappers ---
+    // --- Original Logic Implementation ---
     const video = document.getElementById('videoPreview');
     const viewport = document.getElementById('viewport');
     const hud = document.getElementById('hud');
@@ -619,61 +629,88 @@
         downloadCanvas(outCanvas, prefix);
     }
 
-    // --- New Multi-Storage Download Logic ---
+    // --- Fixed Robust Storage Logic ---
     async function downloadCanvas(canvas, prefix) {
+        const mode = window.storageConfig.mode;
         hudMain.innerText = "Saving...";
+        hudSub.innerText = `Target: ${mode.toUpperCase()}`;
+        
         const isPng = document.getElementById('rawToggle').checked;
         const mime = isPng ? 'image/png' : 'image/jpeg';
         const fileName = `IMG_${Date.now()}_${prefix}.${isPng ? 'png' : 'jpg'}`;
 
-        function finish() { canvas.width = 1; canvas.height = 1; hud.style.display = 'none'; }
+        const finish = () => { 
+            canvas.width = 1; canvas.height = 1; 
+            hud.style.display = 'none'; 
+        };
 
-        // 1. 雲端紀錄模式 (Cloud Metadata Sync)
-        if (storageMode === 'cloud' && user) {
-            const { collection, addDoc, serverTimestamp } = window.fbUtils;
+        // 1. Cloud Record (FireStore Metadata)
+        if (mode === 'cloud' && user && window.fbUtils) {
             try {
+                const { collection, addDoc, serverTimestamp } = window.fbUtils;
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'captures'), {
-                    fileName, timestamp: serverTimestamp(), prefix, user: user.uid
+                    fileName, timestamp: serverTimestamp(), user: user.uid, type: prefix
                 });
-            } catch(e){}
+            } catch(e) { console.error("Cloud log failed", e); }
         }
 
-        // 2. 系統分享模式 (Web Share - 適合傳送到 Google Space / Google Drive)
-        if (storageMode === 'share' && navigator.share) {
+        // 2. Local Directory / NAS Mode (Highest Priority if set)
+        if (mode === 'local' && window.storageConfig.directoryHandle) {
+            try {
+                const handle = window.storageConfig.directoryHandle;
+                // Verify Permission
+                const perm = await handle.queryPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') await handle.requestPermission({ mode: 'readwrite' });
+
+                const fileHandle = await handle.getFileHandle(fileName, { create: true });
+                const writable = await fileHandle.createWritable();
+                
+                canvas.toBlob(async (blob) => {
+                    await writable.write(blob);
+                    await writable.close();
+                    finish();
+                }, mime, 0.95);
+                return; // Strictly exit
+            } catch (err) {
+                console.error("Local/NAS save error", err);
+                alert("寫入資料夾失敗，將回退至下載。請檢查資料夾權限。");
+            }
+        }
+
+        // 3. System Share Mode (Ideal for Google Space / Drive)
+        if (mode === 'share' && navigator.share) {
             canvas.toBlob(async (blob) => {
                 const file = new File([blob], fileName, { type: mime });
                 try {
-                    await navigator.share({ files: [file], title: 'AI 100MP Pro Capture' });
+                    await navigator.share({
+                        files: [file],
+                        title: 'AI 100MP Pro Capture',
+                        text: 'Captured via AI Pro Camera'
+                    });
                     finish();
-                } catch(e) {
-                    // 若取消分享則回退到標準下載
+                } catch (e) {
+                    console.warn("Share cancelled or failed", e);
                     triggerStandardDownload(blob, fileName, finish);
                 }
             }, mime, 0.95);
-            return;
+            return; // Strictly exit
         }
 
-        // 3. 本地模式 (NAS / Network Drive via File System API)
-        if (storageMode === 'local' && directoryHandle) {
-            try {
-                const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-                const writable = await fileHandle.createWritable();
-                canvas.toBlob(async (blob) => {
-                    await writable.write(blob); await writable.close(); finish();
-                }, mime, 0.95);
-                return;
-            } catch(e) { console.warn("Local save failed", e); }
-        }
-
-        // 4. 標準下載 (Fallback)
-        canvas.toBlob((blob) => triggerStandardDownload(blob, fileName, finish), mime, 0.95);
+        // 4. Standard Download (Fallback / Default)
+        canvas.toBlob((blob) => {
+            triggerStandardDownload(blob, fileName, finish);
+        }, mime, 0.95);
     }
 
     function triggerStandardDownload(blob, name, callback) {
         const link = document.createElement('a');
-        link.download = name; link.href = URL.createObjectURL(blob);
+        link.download = name;
+        link.href = URL.createObjectURL(blob);
         link.click();
-        setTimeout(() => { URL.revokeObjectURL(link.href); callback(); }, 100);
+        setTimeout(() => {
+            URL.revokeObjectURL(link.href);
+            callback();
+        }, 200);
     }
 
     window.toggleStyle = (el) => {
