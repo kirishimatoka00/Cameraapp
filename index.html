@@ -287,18 +287,39 @@
         p.style.display = p.style.display === 'flex' ? 'none' : 'flex';
     };
 
+    // Helper to verify directory permissions
+    async function verifyPermission(fileHandle, readWrite) {
+        const options = {};
+        if (readWrite) {
+            options.mode = 'readwrite';
+        }
+        if ((await fileHandle.queryPermission(options)) === 'granted') {
+            return true;
+        }
+        if ((await fileHandle.requestPermission(options)) === 'granted') {
+            return true;
+        }
+        return false;
+    }
+
     window.setStorageOption = async function(mode) {
         if (mode === 'local') {
             if (!('showDirectoryPicker' in window)) {
-                alert("此瀏覽器/環境不支援直接寫入資料夾。將回退至下載模式。");
+                alert("此瀏覽器不支援 File System API，請更換 Chrome/Edge 或使用電腦版。");
                 return;
             }
             try {
-                // 請求用戶選擇 NAS 掛載路徑或本地資料夾
-                window.storageConfig.directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                window.storageConfig.mode = 'local';
+                // 要求用戶選擇 NAS 掛載路徑或本地資料夾
+                const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                if (await verifyPermission(handle, true)) {
+                    window.storageConfig.directoryHandle = handle;
+                    window.storageConfig.mode = 'local';
+                } else {
+                    alert("未獲得資料夾授權。");
+                    return;
+                }
             } catch (e) { 
-                console.warn("User cancelled directory picker");
+                console.warn("User cancelled directory picker", e);
                 return; 
             }
         } else {
@@ -309,7 +330,7 @@
         document.querySelectorAll('.storage-option').forEach(opt => opt.classList.remove('selected'));
         document.getElementById(`opt-${mode}`).classList.add('selected');
         
-        const modeNames = { download: '下載', local: '本地/NAS', share: '分享', cloud: '雲端' };
+        const modeNames = { download: '下載', local: '本地/NAS', share: '分享', cloud: '雲端紀錄' };
         document.getElementById('currentStorageMode').innerText = modeNames[mode];
         
         if(mode !== 'cloud') setTimeout(toggleStoragePanel, 300);
@@ -629,7 +650,7 @@
         downloadCanvas(outCanvas, prefix);
     }
 
-    // --- Fixed Robust Storage Logic ---
+    // --- Fixed Robust Storage Logic with Explicit Permission Handling ---
     async function downloadCanvas(canvas, prefix) {
         const mode = window.storageConfig.mode;
         hudMain.innerText = "Saving...";
@@ -644,7 +665,7 @@
             hud.style.display = 'none'; 
         };
 
-        // 1. Cloud Record (FireStore Metadata)
+        // 1. Cloud Record (FireStore Metadata Sync)
         if (mode === 'cloud' && user && window.fbUtils) {
             try {
                 const { collection, addDoc, serverTimestamp } = window.fbUtils;
@@ -654,30 +675,42 @@
             } catch(e) { console.error("Cloud log failed", e); }
         }
 
-        // 2. Local Directory / NAS Mode (Highest Priority if set)
+        // 2. Local Directory / NAS Mode (Highest Priority)
         if (mode === 'local' && window.storageConfig.directoryHandle) {
             try {
                 const handle = window.storageConfig.directoryHandle;
-                // Verify Permission
-                const perm = await handle.queryPermission({ mode: 'readwrite' });
-                if (perm !== 'granted') await handle.requestPermission({ mode: 'readwrite' });
+                
+                // CRITICAL FIX: Re-verify permission before every write to avoid SecurityError
+                if (!(await verifyPermission(handle, true))) {
+                    alert("權限過期或遭拒絕，請重新設定儲存資料夾。");
+                    finish();
+                    return;
+                }
 
                 const fileHandle = await handle.getFileHandle(fileName, { create: true });
                 const writable = await fileHandle.createWritable();
                 
                 canvas.toBlob(async (blob) => {
-                    await writable.write(blob);
-                    await writable.close();
-                    finish();
+                    try {
+                        await writable.write(blob);
+                        await writable.close();
+                        finish();
+                    } catch(err) {
+                        console.error("Write failed", err);
+                        alert("檔案寫入失敗，請確認硬碟空間或資料夾權限。");
+                        finish();
+                    }
                 }, mime, 0.95);
-                return; // Strictly exit
+                return; 
             } catch (err) {
-                console.error("Local/NAS save error", err);
-                alert("寫入資料夾失敗，將回退至下載。請檢查資料夾權限。");
+                console.error("Local/NAS handle error", err);
+                alert("存取資料夾失敗。原因：" + err.message);
+                finish();
+                return;
             }
         }
 
-        // 3. System Share Mode (Ideal for Google Space / Drive)
+        // 3. System Share Mode (Bridge to Google Space / Chat / Drive)
         if (mode === 'share' && navigator.share) {
             canvas.toBlob(async (blob) => {
                 const file = new File([blob], fileName, { type: mime });
@@ -685,18 +718,18 @@
                     await navigator.share({
                         files: [file],
                         title: 'AI 100MP Pro Capture',
-                        text: 'Captured via AI Pro Camera'
+                        text: 'Captured via AI Pro Camera Pipeline'
                     });
                     finish();
                 } catch (e) {
-                    console.warn("Share cancelled or failed", e);
+                    console.warn("Share failed, falling back to download", e);
                     triggerStandardDownload(blob, fileName, finish);
                 }
             }, mime, 0.95);
-            return; // Strictly exit
+            return;
         }
 
-        // 4. Standard Download (Fallback / Default)
+        // 4. Standard Download (Fallback)
         canvas.toBlob((blob) => {
             triggerStandardDownload(blob, fileName, finish);
         }, mime, 0.95);
@@ -710,7 +743,7 @@
         setTimeout(() => {
             URL.revokeObjectURL(link.href);
             callback();
-        }, 200);
+        }, 300);
     }
 
     window.toggleStyle = (el) => {
