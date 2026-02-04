@@ -3,9 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 100MP Pro (HDR Fixed)</title>
+    <title>AI 100MP Pro (Cloud & Storage)</title>
     <!-- 引入 OpenCV.js -->
     <script async src="https://docs.opencv.org/4.5.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+    <!-- 引入 Firebase SDK (用於雲端同步功能) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.fbUtils = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, collection, addDoc, serverTimestamp };
+    </script>
     <style>
         :root { --accent: #00d2ff; --warn: #ffd700; --active: #00ff88; --bg: #000; --panel: #111; }
         body { margin: 0; background: var(--bg); font-family: -apple-system, Roboto, sans-serif; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; user-select: none; }
@@ -41,6 +49,10 @@
         .toggle-btn input { margin: 0; display: none; }
         .toggle-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 210, 255, 0.1); font-weight: bold; }
         
+        /* 儲存選單按鈕 */
+        .storage-btn-main { border-color: #ffaa00; color: #ffaa00; font-weight: bold; }
+        .storage-btn-main.active { background: rgba(255, 170, 0, 0.2); }
+
         /* 複合按鈕群組 (HDR) */
         .btn-group {
             display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 12px; overflow: hidden;
@@ -55,115 +67,51 @@
         .btn-group.active .toggle-btn { color: var(--accent); font-weight: bold; background: rgba(0, 210, 255, 0.1); }
         
         /* Ultra 按鈕樣式 */
-        .toggle-btn.ultra-btn.active {
-            border-color: #ff0055; color: #ff0055; background: rgba(255, 0, 85, 0.15); box-shadow: 0 0 8px rgba(255, 0, 85, 0.4);
-        }
-        .toggle-btn.ultra-btn.disabled {
-            opacity: 0.3; pointer-events: none; border-color: #333; filter: grayscale(100%);
-        }
+        .toggle-btn.ultra-btn.active { border-color: #ff0055; color: #ff0055; background: rgba(255, 0, 85, 0.15); box-shadow: 0 0 8px rgba(255, 0, 85, 0.4); }
+        .toggle-btn.ultra-btn.disabled { opacity: 0.3; pointer-events: none; border-color: #333; filter: grayscale(100%); }
 
-        /* 2x 按鈕樣式 */
-        .toggle-btn.upscale-btn.active {
-            border-color: var(--active); color: var(--active); background: rgba(0, 255, 136, 0.15);
-        }
-
-        .light-group { display: flex; background: #222; border-radius: 8px; border: 1px solid #444; padding: 2px; }
-        .light-btn { padding: 4px 8px; font-size: 14px; cursor: pointer; border-radius: 6px; border: none; background: transparent; color: #666; transition: 0.2s; }
-        .light-btn.active { background: var(--warn); color: #000; }
-
-        /* --- 視窗區域 --- */
-        .viewport { 
-            flex-grow: 1; position: relative; background: #050505; overflow: hidden;
-            display: flex; justify-content: center; align-items: center; 
-            touch-action: none;
-        }
+        /* 視窗區域 */
+        .viewport { flex-grow: 1; position: relative; background: #050505; overflow: hidden; display: flex; justify-content: center; align-items: center; touch-action: none; }
         video { width: 100%; height: 100%; object-fit: contain; }
 
-        #status-pill {
-            position: absolute; top: 15px; left: 15px;
-            background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px;
-            font-size: 11px; color: var(--active); border: 1px solid rgba(0,255,136,0.3); pointer-events: none; z-index: 10;
-        }
+        #status-pill { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 15px; font-size: 11px; color: var(--active); border: 1px solid rgba(0,255,136,0.3); pointer-events: none; z-index: 10; }
         .warn-mode { color: var(--warn) !important; border-color: var(--warn) !important; }
 
-        #focus-reticle {
-            position: absolute; width: 60px; height: 60px;
-            border: 2px solid #fff; border-radius: 8px;
-            box-shadow: 0 0 5px rgba(0,0,0,0.5);
-            display: none; pointer-events: none; z-index: 30; transform: translate(-50%, -50%);
+        /* 儲存設定面板 */
+        #storage-panel {
+            position: absolute; bottom: 100px; left: 15px; right: 15px;
+            background: rgba(20,20,25,0.98); border: 1px solid #444; border-radius: 16px;
+            padding: 15px; display: none; flex-direction: column; gap: 12px; z-index: 100;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
         }
-        #focus-reticle.focusing { animation: focus-anim 0.5s ease-out forwards; }
-        @keyframes focus-anim {
-            0% { width: 80px; height: 80px; opacity: 1; border-color: #fff; }
-            50% { border-color: var(--warn); }
-            100% { width: 60px; height: 60px; border-color: var(--active); opacity: 0; }
+        .panel-title { font-size: 14px; font-weight: bold; color: #ffaa00; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .storage-option {
+            background: #222; border: 1px solid #333; padding: 10px; border-radius: 10px;
+            display: flex; align-items: center; gap: 10px; cursor: pointer; transition: 0.2s;
         }
+        .storage-option.selected { border-color: #ffaa00; background: rgba(255, 170, 0, 0.1); }
+        .storage-option .icon { font-size: 20px; width: 30px; text-align: center; }
+        .storage-option .details { flex-grow: 1; }
+        .storage-option .details h4 { margin: 0; font-size: 12px; }
+        .storage-option .details p { margin: 0; font-size: 10px; color: #888; }
 
-        #tracker-box {
-            position: absolute; width: 80px; height: 80px;
-            border: 2px solid var(--active); border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-            display: none; pointer-events: none; transition: all 0.1s linear; z-index: 10;
-        }
-        #tracker-box::before { content: ''; position: absolute; top: 50%; left: 20%; right: 20%; height: 1px; background: var(--active); }
-        #tracker-box::after { content: ''; position: absolute; left: 50%; top: 20%; bottom: 20%; width: 1px; background: var(--active); }
-
-        /* --- HUD --- */
-        #hud {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 50;
-            display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px;
-        }
-        .spinner {
-            width: 50px; height: 50px; border-radius: 50%;
-            border: 4px solid #333; border-top: 4px solid var(--active); border-right: 4px solid var(--accent);
-            animation: spin 0.8s infinite linear;
-        }
+        /* HUD */
+        #hud { position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 50; display: none; justify-content: center; align-items: center; flex-direction: column; gap: 15px; }
+        .spinner { width: 50px; height: 50px; border-radius: 50%; border: 4px solid #333; border-top: 4px solid var(--active); border-right: 4px solid var(--accent); animation: spin 0.8s infinite linear; }
         .hud-text { font-family: monospace; color: #fff; font-size: 16px; text-align: center; font-weight: bold; }
         .hud-sub { color: #888; font-size: 12px; margin-top: 5px; max-width: 80%; text-align: center; line-height: 1.4; }
 
-        /* --- Controls --- */
-        .controls { 
-            background: var(--panel); padding: 10px 15px; flex-shrink: 0; z-index: 20;
-            border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 70px; gap: 10px;
-            padding-bottom: max(20px, env(safe-area-inset-bottom));
-        }
-
+        /* Controls */
+        .controls { background: var(--panel); padding: 10px 15px; flex-shrink: 0; z-index: 20; border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 70px; gap: 10px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
         .sliders-col { display: flex; flex-direction: column; gap: 14px; justify-content: center; }
         .slider-row { width: 100%; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: bold; color: #888; }
         .label { width: 40px; text-align: right; }
         .value-disp { width: 30px; text-align: right; font-family: monospace; color: #fff; }
-        
         input[type=range] { flex-grow: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: #333; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #ddd; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
-        
-        .ac-focus input { accent-color: var(--warn); }
-        .ac-ev input { accent-color: var(--accent); }
-        .ac-sharp input { accent-color: #fff; }
-
-        .af-btn {
-            background: #333; color: #fff; border: 1px solid #555; padding: 2px 0; border-radius: 4px; font-size: 10px; cursor: pointer; width: 40px; text-align: center;
-        }
-        .af-btn.tracking { background: var(--active); color: #000; font-weight: bold; border-color: #fff; animation: pulse 2s infinite; }
-        .af-btn.manual { background: var(--warn); color: #000; font-weight: bold; }
-
         .shutter-col { display: flex; align-items: center; justify-content: center; }
-        .shutter {
-            width: 70px; height: 70px; border-radius: 50%;
-            border: 4px solid rgba(255,255,255,0.2);
-            background: radial-gradient(circle, #fff 30%, var(--accent) 100%);
-            cursor: pointer; transition: 0.1s; position: relative;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
-        }
-        .shutter.ultra-mode {
-            background: radial-gradient(circle, #fff 30%, #ff0055 100%);
-            box-shadow: 0 0 25px rgba(255, 0, 85, 0.4);
-        }
-        .shutter.upscale-mode {
-            background: radial-gradient(circle, #fff 30%, var(--active) 100%);
-            box-shadow: 0 0 25px rgba(0, 255, 136, 0.4);
-        }
+        .shutter { width: 70px; height: 70px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.2); background: radial-gradient(circle, #fff 30%, var(--accent) 100%); cursor: pointer; transition: 0.1s; position: relative; box-shadow: 0 0 20px rgba(0, 210, 255, 0.2); }
         .shutter:active { transform: scale(0.92); }
-        .shutter.disabled { filter: grayscale(1); opacity: 0.5; pointer-events: none; }
 
         @keyframes spin { 100% { transform: rotate(360deg); } }
         canvas { display: none; }
@@ -184,6 +132,13 @@
         </div>
         
         <div class="row scroll-row">
+            <!-- Storage Settings Button -->
+            <label class="toggle-btn storage-btn-main" id="storageMainBtn" onclick="toggleStoragePanel()">
+                💾 儲存設定: <span id="currentStorageMode">下載</span>
+            </label>
+
+            <div style="width:1px;height:20px;background:#333;margin:0 4px;"></div>
+
             <!-- Mode Buttons -->
             <label class="toggle-btn ultra-btn" id="ultraBtn" onclick="setResMode('ultra')">
                 <input type="checkbox" id="ultraToggle"> 100MP
@@ -194,7 +149,7 @@
 
             <div style="width:1px;height:20px;background:#333;margin:0 4px;"></div>
 
-            <!-- HDR Group with Selector -->
+            <!-- HDR Group -->
             <div id="hdrGroup" class="btn-group active">
                 <label class="toggle-btn" onclick="toggleHdrGroup(this)">
                     <input type="checkbox" id="hdrToggle" checked> HDR
@@ -222,51 +177,78 @@
         <video id="videoPreview" autoplay playsinline muted></video>
         <div id="status-pill">Ready</div>
         
-        <!-- 對焦 UI -->
+        <!-- 儲存選單面板 -->
+        <div id="storage-panel">
+            <div class="panel-title">
+                選擇照片目的地 <span onclick="toggleStoragePanel()" style="cursor:pointer">✕</span>
+            </div>
+            
+            <div class="storage-option selected" id="opt-download" onclick="setStorageOption('download')">
+                <div class="icon">📥</div>
+                <div class="details">
+                    <h4>瀏覽器下載 (預設)</h4>
+                    <p>照片將儲存至系統預設的「下載」資料夾。</p>
+                </div>
+            </div>
+
+            <div class="storage-option" id="opt-local" onclick="setStorageOption('local')">
+                <div class="icon">📁</div>
+                <div class="details">
+                    <h4>本地資料夾 / 網路硬碟</h4>
+                    <p>直接存入指定的資料夾或已掛載的 NAS 網路磁碟。</p>
+                </div>
+            </div>
+
+            <div class="storage-option" id="opt-share" onclick="setStorageOption('share')">
+                <div class="icon">📤</div>
+                <div class="details">
+                    <h4>系統分享 (Google Space/硬碟)</h4>
+                    <p>拍完後彈出分享視窗，直接上傳雲端或傳送至群組。</p>
+                </div>
+            </div>
+
+            <div class="storage-option" id="opt-cloud" onclick="setStorageOption('cloud')">
+                <div class="icon">☁️</div>
+                <div class="details">
+                    <h4>雲端處理紀錄</h4>
+                    <p>開啟同步：拍攝的時間與設定將備份至雲端空間。</p>
+                </div>
+            </div>
+        </div>
+
         <div id="focus-reticle"></div>
         <div id="tracker-box"></div>
 
-        <!-- 處理 HUD -->
         <div id="hud">
             <div class="spinner"></div>
-            <div class="hud-text">
-                <div id="hud-main">Processing...</div>
-            </div>
+            <div class="hud-text"><div id="hud-main">Processing...</div></div>
             <div id="hud-sub" class="hud-sub">Initializing Pipeline</div>
         </div>
     </div>
 
     <div class="controls">
         <div class="sliders-col">
-            <!-- Focus -->
             <div class="slider-row ac-focus">
                 <span class="label">對焦</span>
                 <input type="range" id="focusSlider" min="0" max="100" step="1" value="0" disabled>
                 <div id="afBtn" class="af-btn" onclick="cycleFocusMode()">AF</div>
             </div>
-
-            <!-- EV -->
             <div class="slider-row ac-ev">
                 <span class="label">EV</span>
                 <input type="range" id="evRange" min="-3" max="3" step="0.5" value="0">
                 <span id="evText" class="value-disp">0</span>
             </div>
-
-            <!-- Zoom -->
             <div class="slider-row ac-zoom">
                 <span class="label">Zoom</span>
                 <input type="range" id="zoomSlider" min="1" max="8" step="0.1" value="1" disabled>
                 <span id="zoomText" class="value-disp">1x</span>
             </div>
-            
-             <!-- Clarity -->
             <div class="slider-row ac-sharp">
                 <span class="label">銳化</span>
                 <input type="range" id="sharpSlider" min="0" max="100" value="30">
                 <span id="sharpText" class="value-disp">30</span>
             </div>
         </div>
-
         <div class="shutter-col">
             <div id="shutterBtn" class="shutter" onclick="captureFlow()"></div>
         </div>
@@ -274,7 +256,56 @@
 
     <canvas id="cMotion" width="64" height="64"></canvas>
 
-<script>
+<script type="module">
+    // --- Firebase / Storage State ---
+    let db, auth, user, appId;
+    let storageMode = 'download'; // 'download', 'local', 'share', 'cloud'
+    let directoryHandle = null;
+
+    async function initCloud() {
+        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.fbUtils;
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+        appId = typeof __app_id !== 'undefined' ? __app_id : 'default-camera-app';
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+            await signInAnonymously(auth);
+        }
+        onAuthStateChanged(auth, (u) => { user = u; });
+    }
+
+    window.toggleStoragePanel = function() {
+        const p = document.getElementById('storage-panel');
+        p.style.display = p.style.display === 'flex' ? 'none' : 'flex';
+    };
+
+    window.setStorageOption = async function(mode) {
+        if (mode === 'local') {
+            if (!('showDirectoryPicker' in window)) {
+                alert("瀏覽器不支援本地磁碟寫入，改用預設下載。");
+                return;
+            }
+            try {
+                directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                storageMode = 'local';
+            } catch (e) { return; }
+        } else {
+            storageMode = mode;
+        }
+
+        document.querySelectorAll('.storage-option').forEach(opt => opt.classList.remove('selected'));
+        document.getElementById(`opt-${mode}`).classList.add('selected');
+        document.getElementById('currentStorageMode').innerText = 
+            mode === 'download' ? '下載' : (mode === 'local' ? '本地' : (mode === 'share' ? '分享' : '雲端'));
+        
+        if(mode !== 'cloud') setTimeout(toggleStoragePanel, 300);
+    };
+
+    // --- Original Logic Wrappers ---
     const video = document.getElementById('videoPreview');
     const viewport = document.getElementById('viewport');
     const hud = document.getElementById('hud');
@@ -283,8 +314,6 @@
     const cameraSelect = document.getElementById('cameraSelect');
     const cvStatus = document.getElementById('cvStatus');
     const shutterBtn = document.getElementById('shutterBtn');
-    
-    // Controls
     const focusSlider = document.getElementById('focusSlider');
     const zoomSlider = document.getElementById('zoomSlider');
     const afBtn = document.getElementById('afBtn');
@@ -297,25 +326,22 @@
     let isSafeMode = false;
     let hasTorch = false;
     let currentCameraIndex = 0; 
-    
     let focusModeState = 'af'; 
     let trackingInterval;
     let prevFrameData = null;
 
-    function onOpenCvReady() {
+    window.onOpenCvReady = function() {
         isOpenCvReady = true;
         cvStatus.innerHTML = '<div class="dot"></div> Engine Ready';
         cvStatus.classList.add('ready');
-    }
+    };
 
     async function init() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
-            
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cams = devices.filter(d => d.kind === 'videoinput');
-            
             cameraSelect.innerHTML = '';
             cams.forEach((d, i) => {
                 const opt = document.createElement('option');
@@ -324,7 +350,6 @@
                 opt.dataset.index = i;
                 cameraSelect.appendChild(opt);
             });
-
             if(cams.length > 0) {
                 const lastIdx = cams.length - 1;
                 cameraSelect.selectedIndex = lastIdx;
@@ -334,30 +359,26 @@
                 const idx = parseInt(e.target.selectedOptions[0].dataset.index);
                 switchCamera(e.target.value, idx);
             };
-            
             viewport.addEventListener('click', triggerTapFocus);
-        } catch(e) { 
-            alert("請允許相機權限: " + e.message); 
-        }
+            initCloud();
+        } catch(e) { alert("相機啟動失敗: " + e.message); }
     }
 
-    function toggleFullScreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => { console.error(err); });
-        } else {
-            document.exitFullscreen();
-        }
-    }
+    window.toggleFullScreen = function() {
+        if (!document.fullscreenEnabled) return;
+        try {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+            else document.exitFullscreen().catch(()=>{});
+        } catch(e){}
+    };
 
     async function switchCamera(id, index) {
         setLightMode('off');
         stopTracking();
         currentCameraIndex = index;
-        
         if(currentStream) currentStream.getTracks().forEach(t => t.stop());
         document.getElementById('status-pill').innerText = "Switching...";
         isSafeMode = false;
-
         try {
             if (index === 2) { 
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "Wide/VGA");
@@ -366,11 +387,7 @@
                 await launch({ video: { deviceId: { exact: id }, width: { ideal: 4096 }, height: { ideal: 4096 }, aspectRatio: 1.333 } }, "4K UHD");
             }
         } catch(e) {
-            console.log("High-res failed, falling back...");
-            try {
-                await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "SafeMode");
-                isSafeMode = true; 
-            } catch(e2) { alert("啟動相機失敗"); }
+            try { await launch({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } } }, "SafeMode"); isSafeMode = true; } catch(e2) {}
         }
         updateUIForCamera();
     }
@@ -378,18 +395,14 @@
     function updateUIForCamera() {
         const ultraBtn = document.getElementById('ultraBtn');
         const ultraToggle = document.getElementById('ultraToggle');
-        
         if (isSafeMode || currentCameraIndex === 2) {
             if (ultraToggle.checked) {
                 ultraToggle.checked = false;
                 ultraBtn.classList.remove('active');
                 shutterBtn.classList.remove('ultra-mode');
-                document.getElementById('zoomSlider').disabled = !capabilities.zoom;
             }
             ultraBtn.classList.add('disabled');
-        } else {
-            ultraBtn.classList.remove('disabled');
-        }
+        } else { ultraBtn.classList.remove('disabled'); }
     }
 
     async function launch(constraints, label) {
@@ -397,23 +410,15 @@
         currentStream = stream;
         video.srcObject = stream;
         videoTrack = stream.getVideoTracks()[0];
-        
-        if(window.ImageCapture) {
-            try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
-        }
-
+        if(window.ImageCapture) try { imageCapture = new ImageCapture(videoTrack); } catch(e){}
         capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        
         if(capabilities.zoom) {
             zoomSlider.disabled = false;
             zoomSlider.min = capabilities.zoom.min;
             zoomSlider.max = Math.min(capabilities.zoom.max, 8); 
             zoomSlider.value = 1;
         } else { zoomSlider.disabled = true; }
-
         hasTorch = !!capabilities.torch;
-        document.getElementById('light-torch').disabled = !hasTorch;
-
         resetFocusUI();
         document.getElementById('status-pill').innerText = label;
         if(isSafeMode) document.getElementById('status-pill').classList.add("warn-mode");
@@ -427,13 +432,10 @@
 
     document.getElementById('evRange').oninput = function() { 
         document.getElementById('evText').innerText = this.value;
-        if(capabilities.exposureCompensation) 
-            videoTrack.applyConstraints({advanced:[{exposureCompensation:parseFloat(this.value)}]}).catch(()=>{});
+        if(capabilities.exposureCompensation) videoTrack.applyConstraints({advanced:[{exposureCompensation:parseFloat(this.value)}]}).catch(()=>{});
     };
     
-    document.getElementById('sharpSlider').oninput = function() {
-        document.getElementById('sharpText').innerText = this.value;
-    };
+    document.getElementById('sharpSlider').oninput = function() { document.getElementById('sharpText').innerText = this.value; };
 
     window.setLightMode = async function(mode) {
         if(!videoTrack) return;
@@ -450,7 +452,6 @@
         if (!videoTrack) return;
         if (focusModeState === 'track') stopTracking();
         resetFocusUI();
-
         const rect = viewport.getBoundingClientRect();
         focusReticle.style.left = `${e.clientX - rect.left}px`;
         focusReticle.style.top = `${e.clientY - rect.top}px`;
@@ -458,77 +459,53 @@
         focusReticle.classList.remove('focusing');
         void focusReticle.offsetWidth; 
         focusReticle.classList.add('focusing');
-
-        try {
-            await videoTrack.applyConstraints({ advanced: [{ focusMode: 'auto' }] });
-        } catch(err) {
+        try { await videoTrack.applyConstraints({ advanced: [{ focusMode: 'auto' }] }); } catch(err) {
             try { await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e) {}
         }
     }
 
-    function cycleFocusMode() {
+    window.cycleFocusMode = function() {
         if(focusModeState === 'af') {
             if(capabilities.focusMode && capabilities.focusMode.includes('manual')) {
                 focusModeState = 'mf';
-                afBtn.innerText = "MF";
-                afBtn.className = "af-btn manual";
+                afBtn.innerText = "MF"; afBtn.className = "af-btn manual";
                 focusSlider.disabled = false;
                 videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
             } else { startTrackingMode(); }
-        } else if(focusModeState === 'mf') {
-            startTrackingMode();
-        } else {
-            resetFocusUI();
-            videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-        }
-    }
+        } else if(focusModeState === 'mf') { startTrackingMode(); }
+        else { resetFocusUI(); videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); }
+    };
 
     focusSlider.oninput = function() {
-        if(focusModeState === 'mf') {
-            videoTrack.applyConstraints({ advanced: [{ focusDistance: this.value / 100 }] });
-        }
-    }
+        if(focusModeState === 'mf') videoTrack.applyConstraints({ advanced: [{ focusDistance: this.value / 100 }] });
+    };
 
     function resetFocusUI() {
         stopTracking();
-        focusModeState = 'af';
-        afBtn.innerText = "AF";
-        afBtn.className = "af-btn";
+        focusModeState = 'af'; afBtn.innerText = "AF"; afBtn.className = "af-btn";
         focusSlider.disabled = true;
     }
 
     function startTrackingMode() {
-        focusModeState = 'track';
-        afBtn.innerText = "🎯";
-        afBtn.className = "af-btn tracking";
-        focusSlider.disabled = true;
+        focusModeState = 'track'; afBtn.innerText = "🎯"; afBtn.className = "af-btn tracking";
         trackerBox.style.display = 'block';
-        
         if(trackingInterval) clearInterval(trackingInterval);
         const cvs = document.getElementById('cMotion');
         const ctx = cvs.getContext('2d');
-        prevFrameData = null;
-
         trackingInterval = setInterval(() => {
             if(video.readyState !== 4) return;
             ctx.drawImage(video, 0, 0, 64, 64);
             const frame = ctx.getImageData(0, 0, 64, 64);
             const data = frame.data;
-
             if(prevFrameData) {
                 let avgX = 0, avgY = 0, count = 0;
                 for(let i=0; i<data.length; i+=16) { 
                     const diff = Math.abs(data[i] - prevFrameData[i]) + Math.abs(data[i+1] - prevFrameData[i+1]) + Math.abs(data[i+2] - prevFrameData[i+2]);
-                    if(diff > 30) { 
-                        const idx = i / 4;
-                        avgX += (idx % 64); avgY += Math.floor(idx / 64); count++;
-                    }
+                    if(diff > 30) { const idx = i / 4; avgX += (idx % 64); avgY += Math.floor(idx / 64); count++; }
                 }
                 if(count > 5) { 
-                    const cx = (avgX / count) / 64 * 100;
-                    const cy = (avgY / count) / 64 * 100;
-                    trackerBox.style.left = `calc(${cx}% - 40px)`;
-                    trackerBox.style.top = `calc(${cy}% - 40px)`;
+                    const cx = (avgX / count) / 64 * 100; const cy = (avgY / count) / 64 * 100;
+                    trackerBox.style.left = `calc(${cx}% - 40px)`; trackerBox.style.top = `calc(${cy}% - 40px)`;
                     trackerBox.style.borderColor = "#00ff88"; 
                 } else { trackerBox.style.borderColor = "#555"; }
             }
@@ -536,344 +513,189 @@
         }, 100);
     }
 
-    function stopTracking() {
-        if(trackingInterval) clearInterval(trackingInterval);
-        trackerBox.style.display = 'none';
-        prevFrameData = null;
-    }
+    function stopTracking() { if(trackingInterval) clearInterval(trackingInterval); trackerBox.style.display = 'none'; prevFrameData = null; }
 
-    // --- Capture Flow ---
-    async function captureFlow() {
+    window.captureFlow = async function() {
         if(!isOpenCvReady) { alert("Engine not ready."); return; }
-
-        hud.style.display = 'flex';
-        hudMain.innerText = "Capturing...";
-        hudSub.innerText = "Acquiring sensor data";
-
+        hud.style.display = 'flex'; hudMain.innerText = "Capturing..."; hudSub.innerText = "Acquiring sensor data";
         const isHdr = document.getElementById('hdrToggle').checked;
         const isUltra = document.getElementById('ultraToggle').checked;
         const isUpscale = document.getElementById('upscaleToggle').checked;
-
         try {
             let baseCanvas;
             if(isHdr) {
-                // HDR Logic: Longer wait time for hardware
                 const count = parseInt(document.getElementById('hdrCount').value);
-                const step = 0.3; 
-                const frames = [];
-                const centerIndex = Math.floor(count / 2);
-                
+                const step = 0.3; const frames = []; const centerIndex = Math.floor(count / 2);
                 for(let i=0; i<count; i++) {
                     const ev = (i - centerIndex) * step;
                     hudSub.innerText = `HDR EV ${ev.toFixed(1)} (${i+1}/${count})`;
-                    
-                    if(capabilities.exposureCompensation) {
-                        // Force update parameters
-                        await videoTrack.applyConstraints({advanced:[
-                            {exposureMode: 'continuous', exposureCompensation: ev}
-                        ]});
-                    }
-                    
-                    // FIXED: Increase wait time to 400ms for hardware to settle
+                    if(capabilities.exposureCompensation) await videoTrack.applyConstraints({advanced:[{exposureMode: 'continuous', exposureCompensation: ev}]});
                     await new Promise(r => setTimeout(r, 400));
                     frames.push(await grabFrame());
                 }
-                
-                // Restore EV
-                if(capabilities.exposureCompensation) {
-                    await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
-                }
-                
+                if(capabilities.exposureCompensation) await videoTrack.applyConstraints({advanced:[{exposureCompensation: 0}]});
                 hudMain.innerText = "Smart HDR Merging...";
-                // Use OpenCV merging for better quality
                 baseCanvas = await mergeHDROpenCV(frames);
             } else {
                 const opts = (window.currentLightMode === 'flash') ? {fillLightMode: 'flash'} : {};
                 baseCanvas = await grabFrame(true, opts);
             }
-
-            // Processing Pipeline
-            if (isUltra) {
-                await processUltra100MP(baseCanvas);
-            } else if (isUpscale) {
-                await processUpscale2x(baseCanvas);
-            } else {
-                await processStandard(baseCanvas);
-            }
-        } catch(e) {
-            console.error(e);
-            alert("Error: " + (e.message || e));
-            hud.style.display = 'none';
-        }
-    }
+            if (isUltra) await processUltra100MP(baseCanvas);
+            else if (isUpscale) await processUpscale2x(baseCanvas);
+            else await processStandard(baseCanvas);
+        } catch(e) { alert("Error: " + e.message); hud.style.display = 'none'; }
+    };
 
     async function grabFrame(usePhotoAPI = false, opts = {}) {
-        if(usePhotoAPI && imageCapture) {
-            try {
-                const blob = await imageCapture.takePhoto(opts);
-                const bmp = await createImageBitmap(blob);
-                const c = document.createElement('canvas');
-                c.width = bmp.width; c.height = bmp.height;
-                c.getContext('2d').drawImage(bmp, 0, 0);
-                return c;
-            } catch(e) { }
-        }
-        const c = document.createElement('canvas');
-        c.width = video.videoWidth; c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
-        return c;
+        if(usePhotoAPI && imageCapture) try {
+            const blob = await imageCapture.takePhoto(opts);
+            const bmp = await createImageBitmap(blob);
+            const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+            c.getContext('2d').drawImage(bmp, 0, 0); return c;
+        } catch(e) { }
+        const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext('2d').drawImage(video, 0, 0); return c;
     }
 
-    // Improved HDR Merge using OpenCV (Weighted Fusion)
     async function mergeHDROpenCV(frames) {
         const centerIdx = Math.floor(frames.length / 2);
-        const w = frames[0].width;
-        const h = frames[0].height;
-        
-        // Convert all frames to Mats
-        let mats = [];
-        for(let f of frames) {
-            mats.push(cv.imread(f));
-        }
-
-        const res = new cv.Mat();
-        const temp = new cv.Mat();
-        
-        // Start with center frame
+        const w = frames[0].width; const h = frames[0].height;
+        let mats = []; for(let f of frames) mats.push(cv.imread(f));
+        const res = new cv.Mat(); const temp = new cv.Mat();
         mats[centerIdx].convertTo(res, cv.CV_32F);
-
-        // Simple Weighted Fusion Logic:
-        // Darker frames contribute to bright areas
-        // Brighter frames contribute to dark areas
-        // Since Mertens fusion is not in standard OpenCV.js build, we simulate a simple blend
-        
-        // Blend in Underexposed (Recover Highlights)
-        for(let i=0; i<centerIdx; i++) {
-            mats[i].convertTo(temp, cv.CV_32F);
-            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
-        }
-
-        // Blend in Overexposed (Recover Shadows)
-        for(let i=centerIdx+1; i<frames.length; i++) {
-            mats[i].convertTo(temp, cv.CV_32F);
-            cv.addWeighted(res, 0.7, temp, 0.3, 0, res); // Blend
-        }
-
-        // Convert back to 8UC4
+        for(let i=0; i<centerIdx; i++) { mats[i].convertTo(temp, cv.CV_32F); cv.addWeighted(res, 0.7, temp, 0.3, 0, res); }
+        for(let i=centerIdx+1; i<frames.length; i++) { mats[i].convertTo(temp, cv.CV_32F); cv.addWeighted(res, 0.7, temp, 0.3, 0, res); }
         res.convertTo(temp, cv.CV_8UC4);
-        
-        // Output to Canvas
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        cv.imshow(c, temp);
-        
-        // Cleanup
-        for(let m of mats) m.delete();
-        res.delete(); temp.delete();
-        
-        return c;
+        const c = document.createElement('canvas'); c.width = w; c.height = h; cv.imshow(c, temp);
+        for(let m of mats) m.delete(); res.delete(); temp.delete(); return c;
     }
 
     async function processUpscale2x(canvas) {
-        hudMain.innerText = "AI Upscaling...";
-        hudSub.innerText = "2x Native Super-Res";
+        hudMain.innerText = "AI Upscaling..."; hudSub.innerText = "2x Native Super-Res";
         await new Promise(r => setTimeout(r, 50)); 
-        let upCanvas;
-        try {
-            upCanvas = document.createElement('canvas');
-            upCanvas.width = canvas.width * 2;
-            upCanvas.height = canvas.height * 2;
-            const ctx = upCanvas.getContext('2d');
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
-            
-            const imgData = ctx.getImageData(0, 0, upCanvas.width, upCanvas.height);
-            const src = cv.matFromImageData(imgData);
-            await processEnhancePipeline(src, "2x_AI");
-            src.delete();
-        } catch(e) {
-            console.error("2x CV Error", e);
-            if(upCanvas) downloadCanvas(upCanvas, "2x_Basic");
-            else alert("2x Error: " + (e.message || e));
-        }
+        let upCanvas = document.createElement('canvas'); upCanvas.width = canvas.width * 2; upCanvas.height = canvas.height * 2;
+        const ctx = upCanvas.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(canvas, 0, 0, upCanvas.width, upCanvas.height);
+        const src = cv.matFromImageData(ctx.getImageData(0, 0, upCanvas.width, upCanvas.height));
+        await processEnhancePipeline(src, "2x_AI"); src.delete();
     }
 
     async function processUltra100MP(canvas) {
-        hudMain.innerText = "Ultra Processing...";
-        await new Promise(r => setTimeout(r, 50)); 
+        hudMain.innerText = "Ultra Processing..."; await new Promise(r => setTimeout(r, 50)); 
         try {
-            const src = cv.imread(canvas);
-            const srcPixels = src.cols * src.rows;
-            const targetPixels = srcPixels * 9; 
-            const useLiteMode = targetPixels > 50000000;
-            
-            const dst = new cv.Mat();
-            const newSize = new cv.Size(src.cols * 3, src.rows * 3);
-            hudSub.innerText = useLiteMode ? "100MP Upscale (Lite Mode)" : "100MP Upscale + HF Boost";
-            cv.resize(src, dst, newSize, 0, 0, cv.INTER_LANCZOS4);
-            src.delete(); 
-
-            if (!useLiteMode) {
-                hudSub.innerText = "Enhancing Texture...";
-                await new Promise(r => setTimeout(r, 50));
-                const blurred = new cv.Mat();
-                cv.GaussianBlur(dst, blurred, new cv.Size(0, 0), 5); 
-                cv.addWeighted(dst, 1.5, blurred, -0.5, 0, dst);
-                blurred.delete();
-            }
-            hudMain.innerText = "Encoding...";
-            const outCanvas = document.createElement('canvas');
-            outCanvas.width = dst.cols; outCanvas.height = dst.rows;
-            cv.imshow(outCanvas, dst); 
-            dst.delete();
+            const src = cv.imread(canvas); const dst = new cv.Mat();
+            cv.resize(src, dst, new cv.Size(src.cols * 3, src.rows * 3), 0, 0, cv.INTER_LANCZOS4);
+            const outCanvas = document.createElement('canvas'); outCanvas.width = dst.cols; outCanvas.height = dst.rows;
+            cv.imshow(outCanvas, dst); src.delete(); dst.delete();
             downloadCanvas(outCanvas, "Ultra_100MP");
-        } catch(e) {
-            alert("Memory Error. Switching to standard 2x mode.");
-            processUpscale2x(canvas); 
-        }
+        } catch(e) { processUpscale2x(canvas); }
     }
 
     async function processStandard(canvas) {
-        hudMain.innerText = "AI Processing...";
-        await new Promise(r => setTimeout(r, 50));
-        try {
-            const src = cv.imread(canvas);
-            await processEnhancePipeline(src, "Standard");
-            src.delete();
-        } catch(e) { downloadCanvas(canvas, "Raw"); }
+        hudMain.innerText = "AI Processing..."; await new Promise(r => setTimeout(r, 50));
+        try { const src = cv.imread(canvas); await processEnhancePipeline(src, "Standard"); src.delete(); }
+        catch(e) { downloadCanvas(canvas, "Raw"); }
     }
 
     async function processEnhancePipeline(srcMat, prefix) {
-        const dst = new cv.Mat();
-        const lab = new cv.Mat();
-        const labPlanes = new cv.MatVector();
-
-        if (srcMat.empty()) throw new Error("Source matrix is empty");
-
-        cv.cvtColor(srcMat, lab, cv.COLOR_RGBA2RGB);
-        cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
-        cv.split(lab, labPlanes);
-        
-        const L = labPlanes.get(0);
-        const A = labPlanes.get(1);
-        const B = labPlanes.get(2);
-
+        const dst = new cv.Mat(); const lab = new cv.Mat(); const labPlanes = new cv.MatVector();
+        cv.cvtColor(srcMat, lab, cv.COLOR_RGBA2RGB); cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab); cv.split(lab, labPlanes);
+        const L = labPlanes.get(0); const A = labPlanes.get(1); const B = labPlanes.get(2);
         if(document.getElementById('denoiseToggle').checked) {
-            hudSub.innerText = "Denoising...";
-            const kSize = new cv.Size(7, 7);
-            cv.GaussianBlur(A, A, kSize, 2);
-            cv.GaussianBlur(B, B, kSize, 2);
-            const tempL = new cv.Mat();
-            cv.bilateralFilter(L, tempL, 3, 30, 30, cv.BORDER_DEFAULT);
-            tempL.copyTo(L);
-            tempL.delete();
+            hudSub.innerText = "Denoising..."; cv.GaussianBlur(A, A, new cv.Size(7, 7), 2); cv.GaussianBlur(B, B, new cv.Size(7, 7), 2);
         }
-
-        // Apply CLAHE always for HDR or if checked
         if(document.getElementById('claheToggle').checked || document.getElementById('hdrToggle').checked) {
-            // HDR needs stronger CLAHE
-            const clipLimit = document.getElementById('hdrToggle').checked ? 3.0 : 2.0;
-            const clahe = new cv.CLAHE(clipLimit, new cv.Size(8, 8));
-            clahe.apply(L, L);
-            clahe.delete();
+            const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8)); clahe.apply(L, L); clahe.delete();
         }
-
         const sharpVal = parseInt(document.getElementById('sharpSlider').value);
         if(sharpVal > 0) {
-            const blurred = new cv.Mat();
-            cv.GaussianBlur(L, blurred, new cv.Size(0, 0), 3);
-            const amount = sharpVal / 40; 
-            cv.addWeighted(L, 1 + amount, blurred, -amount, 0, L);
-            blurred.delete();
+            const blurred = new cv.Mat(); cv.GaussianBlur(L, blurred, new cv.Size(0, 0), 3);
+            cv.addWeighted(L, 1 + (sharpVal/40), blurred, -(sharpVal/40), 0, L); blurred.delete();
         }
-
-        labPlanes.set(0, L);
-        labPlanes.set(1, A);
-        labPlanes.set(2, B);
-        cv.merge(labPlanes, lab);
-        cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
-
-        const outCanvas = document.createElement('canvas');
-        outCanvas.width = dst.cols;
-        outCanvas.height = dst.rows;
-        cv.imshow(outCanvas, dst);
-        
-        dst.delete(); lab.delete(); L.delete(); A.delete(); B.delete(); labPlanes.delete();
-
+        labPlanes.set(0, L); labPlanes.set(1, A); labPlanes.set(2, B);
+        cv.merge(labPlanes, lab); cv.cvtColor(lab, dst, cv.COLOR_Lab2RGB);
+        const outCanvas = document.createElement('canvas'); outCanvas.width = dst.cols; outCanvas.height = dst.rows;
+        cv.imshow(outCanvas, dst); dst.delete(); lab.delete(); L.delete(); A.delete(); B.delete(); labPlanes.delete();
         downloadCanvas(outCanvas, prefix);
     }
 
-    function downloadCanvas(canvas, prefix) {
+    // --- New Multi-Storage Download Logic ---
+    async function downloadCanvas(canvas, prefix) {
         hudMain.innerText = "Saving...";
         const isPng = document.getElementById('rawToggle').checked;
         const mime = isPng ? 'image/png' : 'image/jpeg';
-        
-        canvas.toBlob(function(blob) {
-            const link = document.createElement('a');
-            link.download = `IMG_${Date.now()}_${prefix}.${isPng ? 'png' : 'jpg'}`;
-            link.href = URL.createObjectURL(blob);
-            link.click();
-            setTimeout(() => {
-                URL.revokeObjectURL(link.href);
-                canvas.width = 1; canvas.height = 1; 
-                hud.style.display = 'none';
-            }, 100);
-        }, mime, 0.95);
-    }
+        const fileName = `IMG_${Date.now()}_${prefix}.${isPng ? 'png' : 'jpg'}`;
 
-    window.toggleStyle = function(el) {
-        if (el.classList.contains('disabled')) return;
-        const chk = el.querySelector('input');
-        chk.checked = !chk.checked;
-        el.classList.toggle('active', chk.checked);
-    }
+        function finish() { canvas.width = 1; canvas.height = 1; hud.style.display = 'none'; }
 
-    window.toggleHdrGroup = function(label) {
-        const group = label.parentElement;
-        const chk = label.querySelector('input');
-        chk.checked = !chk.checked;
-        group.classList.toggle('active', chk.checked);
-    }
+        // 1. 雲端紀錄模式 (Cloud Metadata Sync)
+        if (storageMode === 'cloud' && user) {
+            const { collection, addDoc, serverTimestamp } = window.fbUtils;
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'captures'), {
+                    fileName, timestamp: serverTimestamp(), prefix, user: user.uid
+                });
+            } catch(e){}
+        }
 
-    window.setResMode = function(mode) {
-        const ultraEl = document.getElementById('ultraBtn');
-        const upscaleEl = document.getElementById('upscaleBtn');
-        
-        if (mode === 'ultra' && ultraEl.classList.contains('disabled')) {
-            alert("此鏡頭不支援 100MP 模式 (需高性能)");
+        // 2. 系統分享模式 (Web Share - 適合傳送到 Google Space / Google Drive)
+        if (storageMode === 'share' && navigator.share) {
+            canvas.toBlob(async (blob) => {
+                const file = new File([blob], fileName, { type: mime });
+                try {
+                    await navigator.share({ files: [file], title: 'AI 100MP Pro Capture' });
+                    finish();
+                } catch(e) {
+                    // 若取消分享則回退到標準下載
+                    triggerStandardDownload(blob, fileName, finish);
+                }
+            }, mime, 0.95);
             return;
         }
 
-        const ultraChk = document.getElementById('ultraToggle');
-        const upscaleChk = document.getElementById('upscaleToggle');
-
-        if(mode === 'ultra') {
-            ultraChk.checked = !ultraChk.checked;
-            upscaleChk.checked = false; 
-        } else if (mode === 'upscale') {
-            upscaleChk.checked = !upscaleChk.checked;
-            ultraChk.checked = false; 
+        // 3. 本地模式 (NAS / Network Drive via File System API)
+        if (storageMode === 'local' && directoryHandle) {
+            try {
+                const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+                const writable = await fileHandle.createWritable();
+                canvas.toBlob(async (blob) => {
+                    await writable.write(blob); await writable.close(); finish();
+                }, mime, 0.95);
+                return;
+            } catch(e) { console.warn("Local save failed", e); }
         }
 
-        ultraEl.classList.toggle('active', ultraChk.checked);
-        upscaleEl.classList.toggle('active', upscaleChk.checked);
-
-        shutterBtn.classList.remove('ultra-mode', 'upscale-mode');
-        document.getElementById('zoomSlider').disabled = !capabilities.zoom;
-
-        if (ultraChk.checked) {
-            shutterBtn.classList.add('ultra-mode');
-            document.getElementById('zoomSlider').disabled = true;
-        } else if (upscaleChk.checked) {
-            shutterBtn.classList.add('upscale-mode');
-        }
+        // 4. 標準下載 (Fallback)
+        canvas.toBlob((blob) => triggerStandardDownload(blob, fileName, finish), mime, 0.95);
     }
-    
-    init();
 
+    function triggerStandardDownload(blob, name, callback) {
+        const link = document.createElement('a');
+        link.download = name; link.href = URL.createObjectURL(blob);
+        link.click();
+        setTimeout(() => { URL.revokeObjectURL(link.href); callback(); }, 100);
+    }
+
+    window.toggleStyle = (el) => {
+        const chk = el.querySelector('input'); chk.checked = !chk.checked;
+        el.classList.toggle('active', chk.checked);
+    };
+    window.toggleHdrGroup = (label) => {
+        const group = label.parentElement; const chk = label.querySelector('input');
+        chk.checked = !chk.checked; group.classList.toggle('active', chk.checked);
+    };
+    window.setResMode = (mode) => {
+        const ultraEl = document.getElementById('ultraBtn'); const upscaleEl = document.getElementById('upscaleBtn');
+        const ultraChk = document.getElementById('ultraToggle'); const upscaleChk = document.getElementById('upscaleToggle');
+        if(mode === 'ultra') { ultraChk.checked = !ultraChk.checked; upscaleChk.checked = false; }
+        else { upscaleChk.checked = !upscaleChk.checked; ultraChk.checked = false; }
+        ultraEl.classList.toggle('active', ultraChk.checked); upscaleEl.classList.toggle('active', upscaleChk.checked);
+        shutterBtn.classList.remove('ultra-mode', 'upscale-mode');
+        if(ultraChk.checked) shutterBtn.classList.add('ultra-mode');
+        else if(upscaleChk.checked) shutterBtn.classList.add('upscale-mode');
+    };
+
+    init();
 </script>
 </body>
 </html>
-
-
