@@ -63,6 +63,7 @@ A.DEFAULTS = {
   applyOnCapture: true,
   keepOriginal: true,
   rawOn: false,
+  selfieMirror: true,
   rawJpeg: true,
   teleNativeId: '',
   // 影片

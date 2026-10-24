@@ -459,10 +459,19 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     /** 裁切 → 變焦裁切 → (保留原始)→ 色彩調整 → 存檔。回傳含 uri / originalUri。 */
+    private volatile boolean mirrorFlag;
+
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
         bmp = centerCropAspect(bmp, aspect);
         bmp = centerCrop(bmp, zoom);
+        if (mirrorFlag) {
+            Matrix mm = new Matrix();
+            mm.postScale(-1f, 1f);
+            Bitmap fl = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), mm, true);
+            if (fl != bmp) bmp.recycle();
+            bmp = fl;
+        }
         Uri original = null;
         try {
             if (!p.neutral() && keepOriginal) {
@@ -499,8 +508,10 @@ public class CameraToolsPlugin extends Plugin {
         final String prefix = call.getString("prefix", "IMG");
         final LookMath.Params params = parseParams(call.getObject("look"));
         final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
+        final boolean mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
         exec.execute(() -> {
             try {
+                mirrorFlag = mirror;
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -511,7 +522,7 @@ public class CameraToolsPlugin extends Plugin {
                 int uw = swap ? b.outHeight : b.outWidth, uh = swap ? b.outWidth : b.outHeight;
                 boolean needAspect = cropAspect > 0 && uh > 0 && Math.abs(uw / (double) uh - cropAspect) >= 0.004;
                 if (orientation == ExifInterface.ORIENTATION_NORMAL && cropZoom <= 1.01 && !needAspect
-                        && params.neutral()) {
+                        && params.neutral() && !mirror) {
                     call.resolve(describe(writeBytes(prefix, bytes)));
                     return;
                 }
@@ -592,12 +603,14 @@ public class CameraToolsPlugin extends Plugin {
         final String prefix = call.getString("prefix", "IMG");
         final LookMath.Params params = parseParams(call.getObject("look"));
         final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
+        final boolean mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
         if (r.cameraId == null) {
             call.reject("缺少 cameraId");
             return;
         }
         exec.execute(() -> {
             try {
+                mirrorFlag = mirror;
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -1234,8 +1247,10 @@ public class CameraToolsPlugin extends Plugin {
         final double cropAspect = ca == null ? 0.0 : ca;
         final LookMath.Params params = parseParams(call.getObject("look"));
         final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
+        final boolean mirrorHdr = Boolean.TRUE.equals(call.getBoolean("mirror", false));
         exec.execute(() -> {
             try {
+                mirrorFlag = mirrorHdr;
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));

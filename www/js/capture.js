@@ -59,6 +59,7 @@ function baseOpts() {
     prefix: 'IMG',
     look: A.captureLookParams(),
     keepOriginal: !!A.settings.keepOriginal,
+    mirror: !!(S.front && A.settings.selfieMirror),
   };
 }
 

@@ -47,7 +47,7 @@ function bracket(x, y, w, h, color, lw) {
 function faceRect(f) {
   const [x1, y1] = A.vidToFrame(f.x, f.y);
   const [x2, y2] = A.vidToFrame(f.x + f.w, f.y + f.h);
-  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
 }
 
 function drawFaces() {

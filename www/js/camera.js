@@ -62,16 +62,17 @@ A.scanCameras = async () => {
 };
 
 A.assignLenses = () => {
-  const back = S.devices.filter((d) => d.facing === 'back' && d.usable);
+  const wantFacing = S.front ? 'front' : 'back';
+  const back = S.devices.filter((d) => d.facing === wantFacing && d.usable);
   const byId = (id) => back.find((d) => d.id === id || d.deviceId === id) || null;
-  const map = A.settings.lensMap;
+  const map = S.front ? { wide: '', main: '', tele: '' } : A.settings.lensMap;
 
   let main = byId(map.main);
-  if (!main) main = back.find((d) => d.id === '0') || null;
+  if (!main && !S.front) main = back.find((d) => d.id === '0') || null;
   if (!main && back.length) {
     main = back.slice().sort((a, b) => Math.abs((a.eq || 26) - 26) - Math.abs((b.eq || 26) - 26))[0];
   }
-  if (!main) main = S.devices[0] || null;
+  if (!main) main = back[0] || (S.front ? null : S.devices[0]) || null;
 
   const mainEq = main && main.eq ? main.eq : 0;
   const others = back.filter((d) => d !== main && d.eq > 0 && mainEq > 0);
@@ -85,7 +86,7 @@ A.assignLenses = () => {
   if (wide && wide !== main) S.lens.wide = { dev: wide, ratio: Math.min(ratioOf(wide, 0.5), 0.9) };
   if (main) S.lens.main = { dev: main, ratio: 1 };
   if (tele && tele !== main) S.lens.tele = { dev: tele, ratio: Math.max(ratioOf(tele, 2), 1.5) };
-  else if (main && !tele) {
+  else if (main && !tele && !S.front) {
     // WebView 看不到望遠鏡頭 → 找系統隱藏的原生鏡頭(例如 Note 10+ 的 ID 4)
     const manual = (A.settings.teleNativeId || '').trim();
     const cand = (S.nativeOnly || []).filter((n) => n.facing === 'back' && n.equivMm > 0 && mainEq > 0 && n.equivMm >= mainEq * 1.5)
@@ -245,6 +246,7 @@ A.vidToFrame = (u, v) => {
   let x = (w - dw) / 2 + u * dw, y = (h - dh) / 2 + v * dh;
   x = w / 2 + (x - w / 2) * S.cssZoom;
   y = h / 2 + (y - h / 2) * S.cssZoom;
+  if (S.front) x = w - x;
   return [x, y];
 };
 A.frameToVid = (x, y) => {
@@ -252,6 +254,7 @@ A.frameToVid = (x, y) => {
   const w = frame.clientWidth, h = frame.clientHeight;
   const sc = Math.max(w / vw, h / vh);
   const dw = vw * sc, dh = vh * sc;
+  if (S.front) x = w - x;
   const px = w / 2 + (x - w / 2) / S.cssZoom, py = h / 2 + (y - h / 2) / S.cssZoom;
   return [clamp(((px - (w - dw) / 2) / dw), 0, 1), clamp(((py - (h - dh) / 2) / dh), 0, 1)];
 };
@@ -281,7 +284,7 @@ A.applyPreviewZoom = () => {
     css = Math.max(1, prevWithin / z);
   }
   S.cssZoom = css;
-  video.style.transform = css > 1.001 ? 'scale(' + css.toFixed(3) + ')' : '';
+  video.style.transform = (S.front ? 'scaleX(-1) ' : '') + (css > 1.001 ? 'scale(' + css.toFixed(3) + ')' : '');
   const badge = $('zoomBadge');
   badge.textContent = S.Z.toFixed(S.Z < 10 ? 1 : 0) + '×';
   badge.classList.toggle('digital', S.within > 1.01);
@@ -777,4 +780,34 @@ setInterval(() => {
   const fps = st.frameRate ? Math.round(st.frameRate) : 0;
   $('infoLine').textContent = (w && h ? w + '×' + h : '') + (fps && S.mode === 'video' ? ' · ' + fps + 'fps' : '');
 }, 1500);
+})();
+
+/* ------------------------------------------------------------------ 前/後鏡頭切換 */
+(() => {
+  const S = A.S;
+  const b = document.getElementById('btnFlip');
+  b.onclick = async () => {
+    if (A.busy || S.recording || S.switching) return;
+    S.switching = true;
+    const prev = S.front;
+    S.front = !S.front;
+    try {
+      A.assignLenses();
+      const key = S.lens.main ? 'main' : Object.keys(S.lens)[0];
+      if (!key) throw new Error(S.front ? '找不到前鏡頭' : '找不到後鏡頭');
+      S.Z = S.lens[key].ratio;
+      S.ev = 0; S.man.exp = false; S.man.t = null; S.man.iso = null; S.focusManual = false; S.focusDist = null;
+      b.classList.toggle('on', S.front);
+      await A.startLens(key);
+      A.applyPreviewZoom();
+      A.toast(S.front ? '前鏡頭' + (S.lens.wide ? '(含廣角)' : '') : '後鏡頭', 1500);
+    } catch (e) {
+      S.front = prev;
+      A.assignLenses();
+      A.toast('切換失敗:' + A.errMsg(e), 4000);
+      const key = S.lens.main ? 'main' : Object.keys(S.lens)[0];
+      try { S.Z = S.lens[key].ratio; await A.startLens(key); A.applyPreviewZoom(); } catch (e2) { /* ignore */ }
+    }
+    S.switching = false;
+  };
 })();
