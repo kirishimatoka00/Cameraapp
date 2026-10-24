@@ -210,3 +210,5 @@ textarea.txt { resize: vertical; line-height: 1.5; font-size: 13px; }
 /* 原生錄影:讓 WebView 透明,露出後方的原生預覽 */
 html.native-rec, html.native-rec body, html.native-rec #app, html.native-rec #frame, html.native-rec #viewfinder { background: transparent !important; }
 html.native-rec #video { visibility: hidden; }
+
+#lensTag { display: none !important; }
