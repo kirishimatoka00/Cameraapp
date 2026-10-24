@@ -77,15 +77,15 @@ A.assignLenses = () => {
   const mainEq = main && main.eq ? main.eq : 0;
   const others = back.filter((d) => d !== main && d.eq > 0 && mainEq > 0);
   let wide = byId(map.wide);
-  if (!wide) wide = others.filter((d) => d.eq <= mainEq * 0.8).sort((a, b) => a.eq - b.eq)[0] || null;
+  if (!wide) wide = others.filter((d) => d.eq <= mainEq * (S.front ? 0.93 : 0.8)).sort((a, b) => a.eq - b.eq)[0] || null;
   let tele = byId(map.tele);
-  if (!tele) tele = others.filter((d) => d.eq >= mainEq * 1.5).sort((a, b) => a.eq - b.eq)[0] || null;
+  if (!tele) tele = others.filter((d) => d.eq >= mainEq * (S.front ? 1.05 : 1.5)).sort((a, b) => a.eq - b.eq)[0] || null;
 
   const ratioOf = (d, fb) => (!d || !mainEq || !d.eq ? fb : Math.max(0.3, Math.round((d.eq / mainEq) * 2) / 2));
   S.lens = {};
   if (wide && wide !== main) S.lens.wide = { dev: wide, ratio: Math.min(ratioOf(wide, 0.5), 0.9) };
   if (main) S.lens.main = { dev: main, ratio: 1 };
-  if (tele && tele !== main) S.lens.tele = { dev: tele, ratio: Math.max(ratioOf(tele, 2), 1.5) };
+  if (tele && tele !== main) S.lens.tele = { dev: tele, ratio: S.front ? Math.max(1.1, Math.round((tele.eq / mainEq) * 10) / 10) : Math.max(ratioOf(tele, 2), 1.5) };
   else if (main && !tele && !S.front) {
     // WebView 看不到望遠鏡頭 → 找系統隱藏的原生鏡頭(例如 Note 10+ 的 ID 4)
     const manual = (A.settings.teleNativeId || '').trim();
@@ -178,7 +178,7 @@ function updateLensTag() {
   if (!L) { $('lensTag').textContent = '—'; return; }
   const eq = L.nativeId ? (L.native && L.native.equivMm) : L.dev.eq;
   const mm = eq ? ' ' + Math.round(eq) + 'mm' : '';
-  $('lensTag').textContent = ROLE_LABEL[S.lensKey] + mm + (L.nativeId ? ' · 原生#' + L.nativeId : '');
+  $('lensTag').textContent = (S.front ? { wide: '前置廣角', main: '前置 1', tele: '前置 2' } : ROLE_LABEL)[S.lensKey] + mm + (L.nativeId ? ' · 原生#' + L.nativeId : '');
 }
 
 /* ------------------------------------------------------------------ 取景框比例與版面 */
