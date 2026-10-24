@@ -6,10 +6,10 @@ const $ = A.$;
 const S = A.S;
 
 const RES = {
-  '1080P': { w: 1920, h: 1080, bps: 20e6 },
-  '2K': { w: 2560, h: 1440, bps: 32e6 },
-  '4K': { w: 3840, h: 2160, bps: 55e6 },
-  '8K': { w: 7680, h: 4320, bps: 120e6 },
+  '1080P': { w: 1920, h: 1080, bps: 12e6 },
+  '2K': { w: 2560, h: 1440, bps: 20e6 },
+  '4K': { w: 3840, h: 2160, bps: 40e6 },
+  '8K': { w: 7680, h: 4320, bps: 90e6 },
 };
 
 /** 開啟錄影用串流(含麥克風);解析度/FPS 取自設定,系統不支援時會以最接近的規格開啟 */
@@ -63,7 +63,7 @@ document.querySelectorAll('#segFps button').forEach((b) => {
 let rec = null, queue = Promise.resolve(), t0 = 0, timer = null, writeErr = null;
 
 function pickMime() {
-  const c = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
   return c.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
 }
 
@@ -84,7 +84,7 @@ async function start() {
   await N.beginVideo({ mime });
   let mr;
   try {
-    mr = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: r.bps, audioBitsPerSecond: 192000 });
+    mr = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: r.bps * (st.videoFps >= 60 ? 1.5 : 1), audioBitsPerSecond: 128000 });
   } catch (e) {
     try { mr = new MediaRecorder(S.stream, { mimeType: mime }); }
     catch (e2) { await N.abortVideo(); throw e2; }
@@ -97,7 +97,7 @@ async function start() {
     });
   };
   rec = mr;
-  mr.start(1000);
+  mr.start(2000);
   S.recording = true;
   t0 = performance.now();
   $('recBadge').hidden = false;

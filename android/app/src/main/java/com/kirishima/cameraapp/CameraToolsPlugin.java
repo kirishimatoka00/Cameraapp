@@ -617,6 +617,12 @@ public class CameraToolsPlugin extends Plugin {
                 if (s.jpeg != null) {
                     progress("處理 JPEG");
                     int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
+                    if (s.yuv) {
+                        orientation = s.jpegOrientationDeg == 90 ? ExifInterface.ORIENTATION_ROTATE_90
+                                : s.jpegOrientationDeg == 180 ? ExifInterface.ORIENTATION_ROTATE_180
+                                : s.jpegOrientationDeg == 270 ? ExifInterface.ORIENTATION_ROTATE_270
+                                : ExifInterface.ORIENTATION_NORMAL;
+                    }
                     Bitmap bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
                     if (bmp == null) throw new IOException("JPEG 解碼失敗");
                     bmp = applyOrientation(bmp, orientation);
@@ -1053,24 +1059,18 @@ public class CameraToolsPlugin extends Plugin {
     // ------------------------------------------------------------------ 影片(分段寫入,避免整支影片進記憶體)
 
     private OutputStream vOut;
-    private Uri vUri;
+    private File vTmp;
+    private String vMime = "video/mp4";
 
     @PluginMethod
     public void beginVideo(PluginCall call) {
         final String mime = call.getString("mime", "video/mp4");
         vexec.execute(() -> {
             try {
-                closeVideo(true);
-                String ext = mime.contains("webm") ? "webm" : "mp4";
-                ContentValues v = new ContentValues();
-                v.put(MediaStore.MediaColumns.DISPLAY_NAME, "VID_" + stamp() + "." + ext);
-                v.put(MediaStore.MediaColumns.MIME_TYPE, mime.contains("webm") ? "video/webm" : "video/mp4");
-                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + ALBUM);
-                v.put(MediaStore.MediaColumns.IS_PENDING, 1);
-                vUri = resolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v);
-                if (vUri == null) throw new IOException("無法建立影片檔案");
-                vOut = resolver().openOutputStream(vUri);
-                if (vOut == null) throw new IOException("無法寫入影片檔案");
+                closeVideo();
+                vMime = mime.contains("webm") ? "video/webm" : "video/mp4";
+                vTmp = File.createTempFile("rec", mime.contains("webm") ? ".webm" : ".mp4", getContext().getCacheDir());
+                vOut = new java.io.BufferedOutputStream(new FileOutputStream(vTmp), 1 << 20);
                 call.resolve();
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1092,30 +1092,126 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
-    private void closeVideo(boolean discardPending) {
+    private void closeVideo() {
         try {
             if (vOut != null) vOut.close();
         } catch (IOException ignored) {
         }
         vOut = null;
-        if (vUri != null && discardPending) discard(vUri);
-        vUri = null;
+        if (vTmp != null) {
+            //noinspection ResultOfMethodCallIgnored
+            vTmp.delete();
+            vTmp = null;
+        }
+    }
+
+    /** 把 MediaRecorder 產生的分段 MP4 重新封裝成標準 MP4(寫入正確的總長度與索引)。 */
+    private boolean remuxMp4(File src, ParcelFileDescriptor dst) {
+        android.media.MediaExtractor ex = new android.media.MediaExtractor();
+        android.media.MediaMuxer mux = null;
+        boolean started = false;
+        try {
+            ex.setDataSource(src.getAbsolutePath());
+            int n = ex.getTrackCount();
+            mux = new android.media.MediaMuxer(dst.getFileDescriptor(), android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            int[] map = new int[n];
+            int maxIn = 1 << 20;
+            int added = 0;
+            for (int i = 0; i < n; i++) {
+                map[i] = -1;
+                android.media.MediaFormat f = ex.getTrackFormat(i);
+                String mime = f.getString(android.media.MediaFormat.KEY_MIME);
+                if (mime == null) continue;
+                try {
+                    if (mime.startsWith("video/") && f.containsKey(android.media.MediaFormat.KEY_ROTATION)) {
+                        mux.setOrientationHint(f.getInteger(android.media.MediaFormat.KEY_ROTATION));
+                    }
+                    map[i] = mux.addTrack(f);
+                    ex.selectTrack(i);
+                    added++;
+                    if (f.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                        maxIn = Math.max(maxIn, f.getInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE));
+                    }
+                } catch (Throwable skip) {
+                    // 不被 MP4 封裝器接受的音訊格式(例如 Opus)略過,只保留可用的軌
+                }
+            }
+            if (added == 0) return false;
+            maxIn = Math.max(maxIn, 4 << 20);
+            mux.start();
+            started = true;
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(maxIn);
+            android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
+            long samples = 0;
+            while (true) {
+                buf.clear();
+                int size = ex.readSampleData(buf, 0);
+                if (size < 0) break;
+                int ti = ex.getSampleTrackIndex();
+                if (ti >= 0 && map[ti] >= 0) {
+                    info.set(0, size, ex.getSampleTime(), ex.getSampleFlags());
+                    mux.writeSampleData(map[ti], buf, info);
+                    samples++;
+                }
+                ex.advance();
+            }
+            mux.stop();
+            started = false;
+            return samples > 0;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            try { if (mux != null) { if (started) mux.stop(); mux.release(); } } catch (Throwable ignored) { }
+            ex.release();
+        }
     }
 
     @PluginMethod
     public void finishVideo(PluginCall call) {
         vexec.execute(() -> {
+            Uri uri = null;
             try {
-                if (vOut == null || vUri == null) throw new IOException("沒有進行中的錄影");
+                if (vOut == null || vTmp == null) throw new IOException("沒有進行中的錄影");
                 vOut.close();
                 vOut = null;
-                publish(vUri);
+                final File tmp = vTmp;
+                boolean webm = vMime.contains("webm");
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, "VID_" + stamp() + (webm ? ".webm" : ".mp4"));
+                v.put(MediaStore.MediaColumns.MIME_TYPE, webm ? "video/webm" : "video/mp4");
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + ALBUM);
+                v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                uri = resolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) throw new IOException("無法建立影片檔案");
+                progress("整理影片檔案");
+                boolean remuxed = false;
+                if (!webm) {
+                    try (ParcelFileDescriptor pfd = resolver().openFileDescriptor(uri, "rw")) {
+                        if (pfd != null) remuxed = remuxMp4(tmp, pfd);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (!remuxed) {
+                    // 重新封裝失敗:直接存原始檔
+                    try (InputStream is = new java.io.FileInputStream(tmp);
+                         OutputStream os = resolver().openOutputStream(uri, "wt")) {
+                        if (os == null) throw new IOException("無法寫入影片檔案");
+                        byte[] b = new byte[1 << 16];
+                        int n;
+                        while ((n = is.read(b)) > 0) os.write(b, 0, n);
+                    }
+                }
+                publish(uri);
                 JSObject r = new JSObject();
-                r.put("uri", vUri.toString());
-                vUri = null;
+                r.put("uri", uri.toString());
+                r.put("remuxed", remuxed);
+                vTmp = null;
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
                 call.resolve(r);
             } catch (Throwable t) {
-                closeVideo(true);
+                if (uri != null) discard(uri);
+                closeVideo();
                 call.reject(msg(t));
             }
         });
@@ -1124,7 +1220,7 @@ public class CameraToolsPlugin extends Plugin {
     @PluginMethod
     public void abortVideo(PluginCall call) {
         vexec.execute(() -> {
-            closeVideo(true);
+            closeVideo();
             call.resolve();
         });
     }

@@ -95,7 +95,7 @@ function grabFrame(width, jpeg) {
 async function faceTick() {
   const mode = A.settings.focusAssist;
   const want = mode === 'face' || (mode !== 'track' && A.settings.faceAuto);
-  if (!want || !S.stream || document.hidden || V.faceBusy || A.busy) {
+  if (!want || !S.stream || document.hidden || V.faceBusy || A.busy || S.recording) {
     if (!want && V.faces.length) { V.faces = []; A.redrawOverlay(); }
     return;
   }
@@ -175,7 +175,7 @@ A.stopTrack = stopTrack;
 
 function trackTick() {
   const t = V.track;
-  if (!t || A.settings.focusAssist !== 'track' || !S.stream || document.hidden) return;
+  if (!t || A.settings.focusAssist !== 'track' || !S.stream || document.hidden || S.recording) return;
   const img = grabFrame(TW, false);
   if (!img) return;
   if (img.width !== t.W || img.height !== t.H) { stopTrack(); return; }

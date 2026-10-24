@@ -751,7 +751,7 @@ hcv.width = 64; hcv.height = 48;
 const hcx = hcv.getContext('2d', { willReadFrequently: true });
 setInterval(() => {
   hist.hidden = !A.settings.histogram;
-  if (!A.settings.histogram || document.hidden || !S.stream || video.readyState < 2) return;
+  if (!A.settings.histogram || document.hidden || !S.stream || video.readyState < 2 || S.recording) return;
   try {
     hcx.drawImage(video, 0, 0, 64, 48);
     const d = hcx.getImageData(0, 0, 64, 48).data;

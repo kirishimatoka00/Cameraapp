@@ -50,6 +50,7 @@ final class NativeShot {
     static final class Result {
         byte[] jpeg, dng;
         int jpegOrientationDeg;
+        boolean yuv;                // 靜態影像來自 YUV 轉成的 JPEG(沒有 EXIF 方向)
         int width, height;
         StringBuilder notes = new StringBuilder();
     }
@@ -148,8 +149,16 @@ final class NativeShot {
                     }
                 }
             }
-            if (jpegCands.isEmpty()) jpegCands.add(jpegSize);
-            if (prevCands.isEmpty()) prevCands.add(prevSize);
+            final boolean mapKnown = !jpegCands.isEmpty() && !prevCands.isEmpty();
+            if (!mapKnown) {
+                // 隱藏鏡頭讀不到尺寸清單:改試常見尺寸
+                res.notes.append("讀不到此鏡頭的支援尺寸,改試常見尺寸;");
+                jpegCands.clear(); prevCands.clear();
+                int[][] jg = {{4000, 3000}, {4032, 3024}, {3264, 2448}, {2592, 1944}, {2048, 1536}, {1920, 1080}, {1280, 960}, {640, 480}};
+                int[][] pg = {{1440, 1080}, {1280, 960}, {1280, 720}, {640, 480}, {320, 240}};
+                for (int[] z : jg) jpegCands.add(new Size(z[0], z[1]));
+                for (int[] z : pg) prevCands.add(new Size(z[0], z[1]));
+            }
 
             cm.openCamera(req.cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice c) { cam = c; opened.countDown(); }
@@ -161,23 +170,31 @@ final class NativeShot {
 
             boolean ok = false;
             StringBuilder tried = new StringBuilder();
+            int attempts = 0;
+            final long t0 = System.currentTimeMillis();
             outer:
-            for (Size js : jpegCands) {
-                for (Size ps : prevCands) {
-                    for (int rawMode = (wantRaw ? 1 : 0); rawMode >= 0; rawMode--) {
-                        tried.append(ps.getWidth()).append('x').append(ps.getHeight()).append('+')
-                                .append(js.getWidth()).append('x').append(js.getHeight()).append(rawMode == 1 ? "+RAW " : " ");
-                        if (configure(ps, js, rawSize, wantJpeg || rawMode == 0, rawMode == 1)) {
-                            ok = true;
-                            if (wantRaw && rawMode == 0) res.notes.append("此鏡頭無法同時輸出 RAW,只存 JPEG;");
-                            break outer;
+            for (int fmtPass = 0; fmtPass < 2; fmtPass++) {
+                boolean yuv = fmtPass == 1;
+                for (Size js : jpegCands) {
+                    for (Size ps : prevCands) {
+                        for (int rawMode = (wantRaw && !yuv ? 1 : 0); rawMode >= 0; rawMode--) {
+                            if (attempts >= 16 || System.currentTimeMillis() - t0 > 30_000L) break outer;
+                            attempts++;
+                            tried.append(yuv ? "Y:" : "").append(ps.getWidth()).append('x').append(ps.getHeight()).append('+')
+                                    .append(js.getWidth()).append('x').append(js.getHeight()).append(rawMode == 1 ? "+RAW " : " ");
+                            if (configure(ps, js, rawSize, wantJpeg || rawMode == 0, rawMode == 1, yuv)) {
+                                ok = true;
+                                if (wantRaw && rawMode == 0) res.notes.append("此鏡頭無法同時輸出 RAW,只存 JPEG;");
+                                if (yuv) res.notes.append("此鏡頭不支援直接輸出 JPEG,改由 YUV 轉成 JPEG;");
+                                break outer;
+                            }
                         }
                     }
                 }
             }
             if (!ok) {
                 Integer lvl = cc == null ? null : cc.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
-                throw new IOException("此鏡頭不接受任何輸出組合(硬體等級 " + lvl + ",已試 " + tried.toString().trim() + ")");
+                throw new IOException("此鏡頭不接受任何輸出組合(硬體等級 " + lvl + ",尺寸表" + (mapKnown ? "已知" : "讀不到") + ",試了 " + attempts + " 組:" + tried.toString().trim() + ")");
             }
             final boolean useRaw = rawActive;
             check();
@@ -266,7 +283,7 @@ final class NativeShot {
     private volatile boolean rawActive;
 
     /** 建立 ImageReader + 擷取串流;成功回傳 true。失敗時會清掉這次建立的資源。 */
-    private boolean configure(Size prev, Size jpegSz, Size rawSz, boolean wantJpeg, boolean useRaw) throws InterruptedException {
+    private boolean configure(Size prev, Size jpegSz, Size rawSz, boolean wantJpeg, boolean useRaw, boolean yuv) throws InterruptedException {
         releaseOutputs();
         gotJpeg = new CountDownLatch(wantJpeg ? 1 : 0);
         gotRaw = new CountDownLatch(useRaw ? 1 : 0);
@@ -277,13 +294,20 @@ final class NativeShot {
         previewSurface = new Surface(st);
         outs.add(previewSurface);
         if (wantJpeg) {
-            jpegReader = ImageReader.newInstance(jpegSz.getWidth(), jpegSz.getHeight(), ImageFormat.JPEG, 2);
+            jpegReader = ImageReader.newInstance(jpegSz.getWidth(), jpegSz.getHeight(),
+                    yuv ? ImageFormat.YUV_420_888 : ImageFormat.JPEG, 2);
+            res.yuv = yuv;
             jpegReader.setOnImageAvailableListener(rd -> {
                 try (Image im = rd.acquireNextImage()) {
                     if (im != null && res.jpeg == null) {
-                        ByteBuffer b = im.getPlanes()[0].getBuffer();
-                        byte[] a = new byte[b.remaining()];
-                        b.get(a);
+                        byte[] a;
+                        if (yuv) {
+                            a = yuvToJpeg(im, req.jpegQuality);
+                        } else {
+                            ByteBuffer b = im.getPlanes()[0].getBuffer();
+                            a = new byte[b.remaining()];
+                            b.get(a);
+                        }
                         res.jpeg = a;
                         res.width = im.getWidth();
                         res.height = im.getHeight();
@@ -328,6 +352,29 @@ final class NativeShot {
         }
         if (!cfg.await(6, TimeUnit.SECONDS)) return false;
         return good[0];
+    }
+
+    private static byte[] yuvToJpeg(Image im, int quality) {
+        int w = im.getWidth(), h = im.getHeight();
+        Image.Plane[] pl = im.getPlanes();
+        byte[] nv21 = new byte[w * h * 3 / 2];
+        ByteBuffer yb = pl[0].getBuffer();
+        int ys = pl[0].getRowStride();
+        for (int r = 0; r < h; r++) { yb.position(r * ys); yb.get(nv21, r * w, w); }
+        ByteBuffer ub = pl[1].getBuffer(), vb = pl[2].getBuffer();
+        int rs = pl[1].getRowStride(), ps = pl[1].getPixelStride();
+        int o = w * h;
+        for (int r = 0; r < h / 2; r++) {
+            for (int c = 0; c < w / 2; c++) {
+                int idx = r * rs + c * ps;
+                nv21[o++] = vb.get(idx);
+                nv21[o++] = ub.get(idx);
+            }
+        }
+        android.graphics.YuvImage yi = new android.graphics.YuvImage(nv21, ImageFormat.NV21, w, h, null);
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(w * h / 2);
+        yi.compressToJpeg(new android.graphics.Rect(0, 0, w, h), quality, bos);
+        return bos.toByteArray();
     }
 
     private void releaseOutputs() {
