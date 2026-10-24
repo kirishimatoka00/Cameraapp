@@ -70,6 +70,7 @@ function baseOpts() {
     keepOriginal: !!A.settings.keepOriginal,
     mirror: !!(S.front && A.settings.selfieMirror),
     zoomOutMp: A.settings.zoomOutMp || 0,
+    nn: !!A.settings.nnZoom,
   };
 }
 

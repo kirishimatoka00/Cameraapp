@@ -169,6 +169,7 @@
   <div class="viewer-actions" id="vActions">
     <button class="act" id="vEdit">✎ 編輯</button>
     <button class="act" id="vUpscale">🔍 1 億畫素</button>
+    <button class="act" id="vNN">🧠 本機 AI 放大</button>
     <button class="act accent" id="vGemini">✨ AI 回推</button>
     <button class="act danger" id="vDelete">🗑</button>
   </div>
@@ -287,6 +288,7 @@
       <h2>色彩與輸出</h2>
       <label class="switch"><input type="checkbox" id="setApply"><span>拍攝時套用目前色彩設定</span></label>
       <label class="switch"><input type="checkbox" id="setKeep"><span>同時保留未調色的原始檔</span></label>
+      <label class="switch"><input type="checkbox" id="setNnZoom"><span>數位變焦時使用本機 AI 放大(Real-ESRGAN,裁切區 ≤1.8MP,約多花 20~60 秒)</span></label>
       <label class="field">
         <span>原生望遠拍攝:連拍合成張數(降噪、提高細節)</span>
         <select id="setNativeBurst" class="txt"><option value="1">1 張(不合成)</option><option value="3">3 張</option><option value="4">4 張</option><option value="6">6 張</option></select>

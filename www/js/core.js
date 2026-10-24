@@ -69,6 +69,7 @@ A.DEFAULTS = {
   zoomOutMp: 9,
   nativePreview: true,
   nativeBurst: 3,
+  nnZoom: true,
   rawJpeg: true,
   teleNativeId: '',
   // 影片

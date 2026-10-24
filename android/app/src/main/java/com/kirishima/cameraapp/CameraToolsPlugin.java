@@ -235,6 +235,20 @@ public class CameraToolsPlugin extends Plugin {
         return r;
     }
 
+    /** 逐級對半縮小 + 最後一步精確縮到目標畫素。 */
+    private static Bitmap downscaleSmooth(Bitmap src, double wantPx) {
+        Bitmap cur = src;
+        while ((double) cur.getWidth() * cur.getHeight() > wantPx * 4.2) {
+            Bitmap n = Bitmap.createScaledBitmap(cur, Math.max(1, cur.getWidth() / 2), Math.max(1, cur.getHeight() / 2), true);
+            if (n != cur) cur.recycle();
+            cur = n;
+        }
+        double f = Math.sqrt(wantPx / ((double) cur.getWidth() * cur.getHeight()));
+        Bitmap r = Bitmap.createScaledBitmap(cur, (int) Math.round(cur.getWidth() * f), (int) Math.round(cur.getHeight() * f), true);
+        if (r != cur) cur.recycle();
+        return r;
+    }
+
     /** 以逐級 2× 放大 + 雙線性,避免一次大倍率放大的方塊感。 */
     private static Bitmap resizeSmooth(Bitmap src, int tw, int th) {
         Bitmap cur = src;
@@ -475,12 +489,28 @@ public class CameraToolsPlugin extends Plugin {
     /** 裁切 → 變焦裁切 → (保留原始)→ 色彩調整 → 存檔。回傳含 uri / originalUri。 */
     private volatile boolean mirrorFlag;
     private volatile double targetMpFlag;
+    private volatile boolean nnFlag;
 
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
         bmp = centerCropAspect(bmp, aspect);
         bmp = centerCrop(bmp, zoom);
-        if (targetMpFlag > 0 && zoom > 1.01) {
+        boolean nnDone = false;
+        if (nnFlag && zoom > 1.01 && (long) bmp.getWidth() * bmp.getHeight() <= 1_800_000L) {
+            try {
+                Bitmap up = NeuralSR.upscale4x(getContext(), bmp, this::progress);
+                bmp.recycle();
+                bmp = up;
+                nnDone = true;
+            } catch (Throwable t) {
+                progress("AI 放大失敗,改用一般放大");
+            }
+        }
+        if (nnDone) {
+            double have = (double) bmp.getWidth() * bmp.getHeight();
+            double want = targetMpFlag > 0 ? targetMpFlag * 1e6 : Math.min(have, 36e6);
+            if (want < have * 0.95) bmp = downscaleSmooth(bmp, want);
+        } else if (targetMpFlag > 0 && zoom > 1.01) {
             double have = (double) bmp.getWidth() * bmp.getHeight();
             double want = targetMpFlag * 1e6;
             if (want > have * 1.05) {
@@ -537,6 +567,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
+                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -670,6 +701,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
+                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -1445,6 +1477,43 @@ public class CameraToolsPlugin extends Plugin {
     // ------------------------------------------------------------------ 放大到 N 百萬畫素
 
     @PluginMethod
+    public void nnUpscale(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        final int quality = call.getInt("quality", 95);
+        final double maxIn = call.getDouble("maxInputMp", 1.8);
+        final double outMp = call.getDouble("outputMp", 0.0);
+        final String prefix = call.getString("prefix", "NN");
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                progress("讀取原圖");
+                Bitmap src = loadUpright(Uri.parse(uriStr), 0);
+                double px = (double) src.getWidth() * src.getHeight();
+                if (px > maxIn * 1e6) {
+                    double f = Math.sqrt(maxIn * 1e6 / px);
+                    Bitmap s2 = Bitmap.createScaledBitmap(src, Math.max(16, (int) Math.round(src.getWidth() * f)), Math.max(16, (int) Math.round(src.getHeight() * f)), true);
+                    if (s2 != src) src.recycle();
+                    src = s2;
+                }
+                Bitmap up = NeuralSR.upscale4x(getContext(), src, this::progress);
+                src.recycle();
+                double have = (double) up.getWidth() * up.getHeight();
+                double want = outMp > 0 ? outMp * 1e6 : Math.min(have, 36e6);
+                if (want < have * 0.95) up = downscaleSmooth(up, want);
+                progress("編碼 JPEG");
+                Uri out = writeBitmap(prefix, up, quality);
+                up.recycle();
+                call.resolve(describe(out));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
     public void upscale(PluginCall call) {
         final String uriStr = call.getString("uri");
         Double tm = call.getDouble("targetMegapixels", 100.0);
@@ -1565,6 +1634,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirrorHdr;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
+                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1587,6 +1657,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
+                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
                 call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
