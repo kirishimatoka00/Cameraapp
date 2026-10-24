@@ -70,6 +70,7 @@ A.DEFAULTS = {
   nativePreview: true,
   nativeBurst: 3,
   nnZoom: true,
+  nnMix: 40,
   rawJpeg: true,
   teleNativeId: '',
   // 影片

@@ -490,6 +490,32 @@ public class CameraToolsPlugin extends Plugin {
     private volatile boolean mirrorFlag;
     private volatile double targetMpFlag;
     private volatile boolean nnFlag;
+    private volatile float nnMix = 0.4f;
+
+    /** 把 AI 放大結果與一般放大的原圖按比例混合,找回被 AI 抹掉的細節紋理。 */
+    private static Bitmap blendWithBase(Bitmap nn, Bitmap base, float mix) {
+        if (mix >= 0.99f) return nn;
+        Bitmap b = base;
+        if (b.getWidth() != nn.getWidth() || b.getHeight() != nn.getHeight())
+            b = resizeSmooth(base, nn.getWidth(), nn.getHeight());
+        int w = nn.getWidth(), h = nn.getHeight();
+        int[] a = new int[w], c = new int[w];
+        int m = Math.round(mix * 256);
+        for (int y = 0; y < h; y++) {
+            nn.getPixels(a, 0, w, 0, y, w, 1);
+            b.getPixels(c, 0, w, 0, y, w, 1);
+            for (int x = 0; x < w; x++) {
+                int p = a[x], q = c[x];
+                int r = ((p >> 16 & 255) * m + (q >> 16 & 255) * (256 - m)) >> 8;
+                int g = ((p >> 8 & 255) * m + (q >> 8 & 255) * (256 - m)) >> 8;
+                int bl = ((p & 255) * m + (q & 255) * (256 - m)) >> 8;
+                a[x] = 0xFF000000 | r << 16 | g << 8 | bl;
+            }
+            nn.setPixels(a, 0, w, 0, y, w, 1);
+        }
+        if (b != base) b.recycle();
+        return nn;
+    }
 
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
@@ -499,6 +525,10 @@ public class CameraToolsPlugin extends Plugin {
         if (nnFlag && zoom > 1.01 && (long) bmp.getWidth() * bmp.getHeight() <= 1_800_000L) {
             try {
                 Bitmap up = NeuralSR.upscale4x(getContext(), bmp, this::progress);
+                double haveU = (double) up.getWidth() * up.getHeight();
+                double wantU = targetMpFlag > 0 ? targetMpFlag * 1e6 : Math.min(haveU, 36e6);
+                if (wantU < haveU * 0.95) up = downscaleSmooth(up, wantU);
+                up = blendWithBase(up, bmp, nnMix);
                 bmp.recycle();
                 bmp = up;
                 nnDone = true;
@@ -507,9 +537,7 @@ public class CameraToolsPlugin extends Plugin {
             }
         }
         if (nnDone) {
-            double have = (double) bmp.getWidth() * bmp.getHeight();
-            double want = targetMpFlag > 0 ? targetMpFlag * 1e6 : Math.min(have, 36e6);
-            if (want < have * 0.95) bmp = downscaleSmooth(bmp, want);
+            // 已在混合前縮到目標畫素
         } else if (targetMpFlag > 0 && zoom > 1.01) {
             double have = (double) bmp.getWidth() * bmp.getHeight();
             double want = targetMpFlag * 1e6;
@@ -568,6 +596,7 @@ public class CameraToolsPlugin extends Plugin {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
+                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -702,6 +731,7 @@ public class CameraToolsPlugin extends Plugin {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
+                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -1482,6 +1512,7 @@ public class CameraToolsPlugin extends Plugin {
         final int quality = call.getInt("quality", 95);
         final double maxIn = call.getDouble("maxInputMp", 1.8);
         final double outMp = call.getDouble("outputMp", 0.0);
+        nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
         final String prefix = call.getString("prefix", "NN");
         if (uriStr == null) {
             call.reject("缺少 uri");
@@ -1499,10 +1530,11 @@ public class CameraToolsPlugin extends Plugin {
                     src = s2;
                 }
                 Bitmap up = NeuralSR.upscale4x(getContext(), src, this::progress);
-                src.recycle();
                 double have = (double) up.getWidth() * up.getHeight();
                 double want = outMp > 0 ? outMp * 1e6 : Math.min(have, 36e6);
                 if (want < have * 0.95) up = downscaleSmooth(up, want);
+                up = blendWithBase(up, src, nnMix);
+                src.recycle();
                 progress("編碼 JPEG");
                 Uri out = writeBitmap(prefix, up, quality);
                 up.recycle();
@@ -1635,6 +1667,7 @@ public class CameraToolsPlugin extends Plugin {
                 mirrorFlag = mirrorHdr;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
+                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1658,6 +1691,7 @@ public class CameraToolsPlugin extends Plugin {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
+                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
                 call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));

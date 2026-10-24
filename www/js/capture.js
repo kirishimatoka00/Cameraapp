@@ -71,6 +71,7 @@ function baseOpts() {
     mirror: !!(S.front && A.settings.selfieMirror),
     zoomOutMp: A.settings.zoomOutMp || 0,
     nn: !!A.settings.nnZoom,
+    nnMix: (A.settings.nnMix ?? 40) / 100,
   };
 }
 

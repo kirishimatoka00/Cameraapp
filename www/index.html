@@ -290,6 +290,10 @@
       <label class="switch"><input type="checkbox" id="setKeep"><span>同時保留未調色的原始檔</span></label>
       <label class="switch"><input type="checkbox" id="setNnZoom"><span>數位變焦時使用本機 AI 放大(Real-ESRGAN,裁切區 ≤1.8MP,約多花 20~60 秒)</span></label>
       <label class="field">
+        <span>AI 放大強度(越低越保留原始細節/銳利,越高越平滑)</span>
+        <select id="setNnMix" class="txt"><option value="0">0%(僅一般放大)</option><option value="25">25%</option><option value="40">40%</option><option value="60">60%</option><option value="100">100%</option></select>
+      </label>
+      <label class="field">
         <span>原生望遠拍攝:連拍合成張數(降噪、提高細節)</span>
         <select id="setNativeBurst" class="txt"><option value="1">1 張(不合成)</option><option value="3">3 張</option><option value="4">4 張</option><option value="6">6 張</option></select>
         <small>會多花幾秒到十幾秒合成;RAW 拍攝不適用。</small>

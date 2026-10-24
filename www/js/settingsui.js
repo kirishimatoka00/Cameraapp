@@ -74,6 +74,7 @@ function sync() {
   $('setRawJpeg').checked = st.rawJpeg;
   $('setMirror').checked = st.selfieMirror;
   $('setNnZoom').checked = st.nnZoom !== false;
+  $('setNnMix').value = String(st.nnMix ?? 40);
   $('setNativeBurst').value = String(st.nativeBurst || 1);
   $('setNativePrev').checked = st.nativePreview !== false;
   $('setZoomMp').value = String(st.zoomOutMp == null ? 9 : st.zoomOutMp);
@@ -147,6 +148,7 @@ A.bindSettings = () => {
 
   $('setApply').onchange = (e) => { st.applyOnCapture = e.target.checked; A.saveSettings(); };
   $('setKeep').onchange = (e) => { st.keepOriginal = e.target.checked; A.saveSettings(); };
+  $('setNnMix').onchange = (e) => { st.nnMix = +e.target.value; A.saveSettings(); };
   $('setNnZoom').onchange = (e) => { st.nnZoom = e.target.checked; A.saveSettings(); };
   $('setNativeBurst').onchange = (e) => { st.nativeBurst = parseInt(e.target.value, 10); A.saveSettings(); };
   $('setNativePrev').onchange = async (e) => { st.nativePreview = e.target.checked; A.saveSettings(); try { await A.restartLens(); } catch (e2) { /* ignore */ } };
