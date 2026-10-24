@@ -143,7 +143,7 @@ A.blobToBase64 = (blob) => new Promise((resolve, reject) => {
   const fr = new FileReader();
   fr.onload = () => {
     const s = String(fr.result);
-    resolve(s.slice(s.indexOf(',') + 1));
+    resolve(s.slice(s.lastIndexOf(',') + 1));
   };
   fr.onerror = () => reject(fr.error || new Error('讀取失敗'));
   fr.readAsDataURL(blob);

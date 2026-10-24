@@ -93,7 +93,7 @@ A.assignLenses = () => {
       .sort((a, b) => a.equivMm - b.equivMm)[0] || null;
     const info = manual ? ((S.nativeAll || []).find((n) => n.id === manual) || { id: manual }) : cand;
     if (info && info.id !== main.id) {
-      const r = info.equivMm && mainEq ? Math.max(1.5, Math.round((info.equivMm / mainEq) * 2) / 2) : 2;
+      const r = info.equivMm && mainEq ? Math.max(2, Math.round((info.equivMm / mainEq) * 2) / 2) : 2;  // 隱藏望遠至少視為 2×
       S.lens.tele = { dev: main, ratio: r, base: 1, nativeId: info.id, native: info };
     }
   }

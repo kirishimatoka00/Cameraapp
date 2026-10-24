@@ -23,7 +23,7 @@ function fillSelect(sel, role) {
 function renderCamList() {
   const box = $('camList');
   box.innerHTML = '';
-  const roleOf = (d) => Object.entries(S.lens).filter(([, l]) => l.dev === d).map(([k]) => A.ROLE_LABEL[k]).join('/');
+  const roleOf = (d) => Object.entries(S.lens).filter(([, l]) => l.dev === d && !l.nativeId).map(([k]) => A.ROLE_LABEL[k]).join('/');
   S.devices.forEach((d) => {
     const div = document.createElement('div');
     const role = roleOf(d);
