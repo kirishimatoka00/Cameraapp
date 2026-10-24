@@ -62,6 +62,9 @@ A.DEFAULTS = {
   profiles: [],          // 自訂色彩檔案 [{id,name,look}]
   applyOnCapture: true,
   keepOriginal: true,
+  rawOn: false,
+  rawJpeg: true,
+  teleNativeId: '',
   // 影片
   videoRes: '4K',
   videoFps: 30,

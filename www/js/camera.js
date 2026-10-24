@@ -56,6 +56,7 @@ A.scanCameras = async () => {
       native: nat,
     };
   });
+  S.nativeAll = native;
   S.nativeOnly = native.filter((n) => !S.devices.some((d) => d.id === n.id));
   A.assignLenses();
 };
@@ -84,6 +85,17 @@ A.assignLenses = () => {
   if (wide && wide !== main) S.lens.wide = { dev: wide, ratio: Math.min(ratioOf(wide, 0.5), 0.9) };
   if (main) S.lens.main = { dev: main, ratio: 1 };
   if (tele && tele !== main) S.lens.tele = { dev: tele, ratio: Math.max(ratioOf(tele, 2), 1.5) };
+  else if (main && !tele) {
+    // WebView 看不到望遠鏡頭 → 找系統隱藏的原生鏡頭(例如 Note 10+ 的 ID 4)
+    const manual = (A.settings.teleNativeId || '').trim();
+    const cand = (S.nativeOnly || []).filter((n) => n.facing === 'back' && n.equivMm > 0 && mainEq > 0 && n.equivMm >= mainEq * 1.5)
+      .sort((a, b) => a.equivMm - b.equivMm)[0] || null;
+    const info = manual ? ((S.nativeAll || []).find((n) => n.id === manual) || { id: manual }) : cand;
+    if (info && info.id !== main.id) {
+      const r = info.equivMm && mainEq ? Math.max(1.5, Math.round((info.equivMm / mainEq) * 2) / 2) : 2;
+      S.lens.tele = { dev: main, ratio: r, base: 1, nativeId: info.id, native: info };
+    }
+  }
   A.renderLensButtons();
 };
 
@@ -140,6 +152,7 @@ A.startLens = async (key) => {
   await applyBaseControls();
   A.refreshReadouts();
   updateLensTag();
+  A.updateRawChip();
   return true;
 };
 A.restartLens = () => A.startLens(S.lensKey);
@@ -159,8 +172,9 @@ async function applyBaseControls() {
 function updateLensTag() {
   const L = S.lens[S.lensKey];
   if (!L) { $('lensTag').textContent = '—'; return; }
-  const mm = L.dev.eq ? ' ' + Math.round(L.dev.eq) + 'mm' : '';
-  $('lensTag').textContent = ROLE_LABEL[S.lensKey] + mm;
+  const eq = L.nativeId ? (L.native && L.native.equivMm) : L.dev.eq;
+  const mm = eq ? ' ' + Math.round(eq) + 'mm' : '';
+  $('lensTag').textContent = ROLE_LABEL[S.lensKey] + mm + (L.nativeId ? ' · 原生#' + L.nativeId : '');
 }
 
 /* ------------------------------------------------------------------ 取景框比例與版面 */
@@ -256,13 +270,15 @@ const sliderToZ = (v) => 0.5 * Math.pow(20, v / 100);
 A.applyPreviewZoom = () => {
   const L = S.lens[S.lensKey];
   const ratio = L ? L.ratio : 1;
-  S.within = Math.max(1, S.Z / ratio);
-  let css = S.within;
+  const base = L && L.base ? L.base : ratio;       // 預覽畫面實際的光學倍率(虛擬望遠 = 主鏡頭 1×)
+  S.within = Math.max(1, S.Z / ratio);              // 相對「拍攝鏡頭」的數位倍率(裁切用)
+  const prevWithin = Math.max(1, S.Z / base);
+  let css = prevWithin;
   if (S.mode === 'video' && S.caps.zoom && S.track) {
     // 影片:用硬體變焦,錄下來的畫面才會跟著放大
-    const z = clamp(S.within, S.caps.zoom.min, S.caps.zoom.max);
+    const z = clamp(prevWithin, S.caps.zoom.min, S.caps.zoom.max);
     S.track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
-    css = Math.max(1, S.within / z);
+    css = Math.max(1, prevWithin / z);
   }
   S.cssZoom = css;
   video.style.transform = css > 1.001 ? 'scale(' + css.toFixed(3) + ')' : '';
@@ -283,7 +299,14 @@ A.setZoom = async (Z, allowSwitch) => {
     const key = chooseLens(Z);
     if (key && key !== S.lensKey) {
       S.switching = true;
-      try { await A.startLens(key); } catch (e) { A.toast('切換鏡頭失敗:' + A.errMsg(e)); }
+      const cur = S.lens[S.lensKey];
+      if (cur && S.lens[key].dev === cur.dev && S.stream) {
+        S.lensKey = key;            // 虛擬望遠與主鏡頭共用預覽,不必重開串流
+        updateLensTag();
+        A.updateRawChip();
+      } else {
+        try { await A.startLens(key); } catch (e) { A.toast('切換鏡頭失敗:' + A.errMsg(e)); }
+      }
       S.switching = false;
     }
   }
@@ -617,6 +640,37 @@ A.refreshReadouts = () => {
   if (a && !PARAMS[a].ok()) { S.activeParam = null; $('paramRow').hidden = true; }
 };
 
+/* ------------------------------------------------------------------ RAW / 原生拍攝 */
+
+/** 目前鏡頭用 Camera2 拍攝時的鏡頭 ID 與 RAW 能力 */
+A.nativeLensInfo = () => {
+  const L = S.lens[S.lensKey];
+  if (!L) return null;
+  const nat = L.nativeId ? L.native : L.dev.native;
+  return { id: L.nativeId || L.dev.id, virtual: !!L.nativeId, raw: !!(nat && nat.raw) };
+};
+A.updateRawChip = () => {
+  const b = $('btnRaw');
+  const info = A.nativeLensInfo();
+  const show = S.mode === 'manual';
+  b.hidden = !show;
+  if (!show) return;
+  const ok = !!(info && info.raw);
+  b.classList.toggle('on', ok && A.settings.rawOn);
+  b.classList.toggle('off', !ok);
+  b.textContent = ok ? (A.settings.rawOn ? 'RAW 開' : 'RAW 關') : 'RAW ✕';
+};
+$('btnRaw').onclick = () => {
+  const info = A.nativeLensInfo();
+  if (!info || !info.raw) { A.toast('此鏡頭沒有回報 RAW 能力,無法拍 RAW', 3000); return; }
+  A.settings.rawOn = !A.settings.rawOn;
+  A.saveSettings();
+  A.updateRawChip();
+  A.toast(A.settings.rawOn
+    ? 'RAW 已開:拍照時會暫停預覽、改用原生相機輸出 DNG' + (A.settings.rawJpeg ? '+JPEG' : '')
+    : 'RAW 已關', 2800);
+};
+
 /* ------------------------------------------------------------------ 白平衡 / 色彩 → 預覽與硬體 */
 
 A.applyHwWb = async () => {
@@ -679,6 +733,7 @@ A.setMode = async (m) => {
   }
   A.applyPreviewZoom();
   A.refreshReadouts();
+  A.updateRawChip();
   if (A.syncVideoOpts) A.syncVideoOpts();
   if (m === 'manual' && !S.caps.exposureTime) A.toast('此鏡頭不開放手動快門/ISO,僅提供 EV 與對焦等可用項目', 4000);
 };

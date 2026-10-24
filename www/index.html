@@ -46,6 +46,7 @@
     <button class="tb" id="btnSettings" aria-label="設定">⚙</button>
     <button class="tb" id="btnLight" aria-label="閃光燈">🚫</button>
     <div class="chips" id="topChips">
+      <button class="chip" id="btnRaw" hidden>RAW</button>
       <button class="chip" id="btnHdr">HDR 關</button>
       <button class="chip" id="btnRatio">3:4</button>
       <button class="chip" id="btnGrid">格線</button>
@@ -278,6 +279,8 @@
       <h2>色彩與輸出</h2>
       <label class="switch"><input type="checkbox" id="setApply"><span>拍攝時套用目前色彩設定</span></label>
       <label class="switch"><input type="checkbox" id="setKeep"><span>同時保留未調色的原始檔</span></label>
+      <label class="switch"><input type="checkbox" id="setRawJpeg"><span>RAW 拍攝時同時存 JPEG</span></label>
+      <p class="note">RAW(DNG)只在「手動」模式提供,存為完整感光範圍的 DNG,不含裁切/調色/變焦;拍攝時會短暫中斷預覽(約 2~4 秒)。</p>
       <label class="field">
         <span>JPEG 品質:<b id="qVal">95</b></span>
         <input type="range" id="setQuality" min="80" max="100" step="1">
@@ -295,6 +298,11 @@
       <label class="field"><span>廣角(0.5×)</span><select id="mapWide" class="txt"></select></label>
       <label class="field"><span>主鏡頭(1×)</span><select id="mapMain" class="txt"></select></label>
       <label class="field"><span>望遠(2×,Note 10+)</span><select id="mapTele" class="txt"></select></label>
+      <label class="field">
+        <span>原生望遠鏡頭 ID(隱藏鏡頭)</span>
+        <input type="text" id="setTeleId" class="txt" inputmode="numeric" placeholder="留空 = 自動偵測(Note 10+ 通常是 4)">
+        <small>系統不列出、WebView 看不到的望遠鏡頭,改以原生 Camera2 開啟拍攝:預覽用主鏡頭放大 2×,按快門時才切到望遠鏡頭(拍攝約 2~4 秒)。</small>
+      </label>
       <div class="cam-list" id="camList"></div>
       <button class="act small" id="btnRescan" type="button">重新偵測鏡頭</button>
     </section>

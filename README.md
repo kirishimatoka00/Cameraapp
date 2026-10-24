@@ -33,3 +33,10 @@ cd android && ./gradlew assembleDebug
 - 放大到 1 億畫素是插值,不會增加真實細節;Gemini 回推是模型合成,結果可能偏離實景
 - Samsung 可能只開放部分實體鏡頭給第三方 App,實際能否使用 2× 望遠請看設定頁的鏡頭清單
 - API key 存在本機 WebView 儲存空間,影像會直接送往 Google 的 Gemini API
+
+
+## RAW 與隱藏望遠鏡頭(v3.1)
+
+- **RAW(DNG)**:只在「手動」模式提供。按下快門時 App 會短暫釋放 WebView 預覽,改用 Camera2 直接輸出 `RAW_SENSOR` 並以 `DngCreator` 寫成 DNG(可選同時存 JPEG)。DNG 為完整感光範圍,不含裁切/調色/變焦。
+- **RAW 編輯**:編輯器內建簡易 DNG 顯影(去馬賽克 → 白平衡 → 色彩矩陣 → 線性 sRGB),EV 與白平衡/色溫/色調在線性空間處理,其餘調整在顯影後套用,存成 JPEG。僅支援未壓縮 16-bit 的 DNG(本 App 拍出的 DNG),其他 DNG 會退回系統解碼。
+- **隱藏望遠鏡頭**:Galaxy Note 10+ 的望遠鏡頭(通常為相機 ID 4)不在系統相機清單內,WebView 看不到。App 會探測隱藏 ID,把它當作 2× 望遠:預覽使用主鏡頭放大 2×,按下快門時才以原生 Camera2 開啟望遠鏡頭拍攝。可在設定頁手動指定 ID。

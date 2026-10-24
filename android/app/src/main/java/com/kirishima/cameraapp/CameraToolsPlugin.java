@@ -109,9 +109,13 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     private Uri createPending(String name) throws IOException {
+        return createPending(name, "image/jpeg");
+    }
+
+    private Uri createPending(String name, String mime) throws IOException {
         ContentValues v = new ContentValues();
         v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-        v.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
         v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + ALBUM);
         v.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri uri = resolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
@@ -300,10 +304,25 @@ public class CameraToolsPlugin extends Plugin {
         try {
             CameraManager cm = (CameraManager) getContext().getSystemService(Context.CAMERA_SERVICE);
             JSArray arr = new JSArray();
-            for (String id : cm.getCameraIdList()) {
-                CameraCharacteristics cc = cm.getCameraCharacteristics(id);
+            String[] listedIds = cm.getCameraIdList();
+            List<String> allIds = new ArrayList<>();
+            for (String id : listedIds) allIds.add(id);
+            // 探測系統沒列出、但可能可由原生開啟的隱藏鏡頭 ID(例如 Note 10+ 的望遠鏡頭常是 4)
+            for (int i = 0; i < 10; i++) if (!allIds.contains(String.valueOf(i))) allIds.add(String.valueOf(i));
+            for (int i = 50; i < 60; i++) allIds.add(String.valueOf(i));
+            for (String id : allIds) {
+                boolean listedId = false;
+                for (String l : listedIds) if (l.equals(id)) listedId = true;
+                CameraCharacteristics cc;
+                try {
+                    cc = cm.getCameraCharacteristics(id);
+                } catch (Throwable t) {
+                    if (listedId) throw t;
+                    continue;
+                }
                 JSObject o = new JSObject();
                 o.put("id", id);
+                o.put("hidden", !listedId);
 
                 Integer facing = cc.get(CameraCharacteristics.LENS_FACING);
                 String f = "unknown";
@@ -341,6 +360,9 @@ public class CameraToolsPlugin extends Plugin {
                     }
                 }
                 o.put("usable", usable);
+                boolean rawCap = false;
+                if (caps != null) for (int c : caps) if (c == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW) rawCap = true;
+                o.put("raw", rawCap);
 
                 JSArray phys = new JSArray();
                 if (Build.VERSION.SDK_INT >= 28) {
@@ -503,6 +525,172 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
+
+    // ------------------------------------------------------------------ 原生拍攝(RAW / 隱藏鏡頭)
+
+    private Uri writeDng(String prefix, byte[] dng) throws IOException {
+        Uri uri = createPending(prefix + "_" + stamp() + ".dng", "image/x-adobe-dng");
+        try (OutputStream os = resolver().openOutputStream(uri)) {
+            if (os == null) throw new IOException("無法寫入相簿");
+            os.write(dng);
+        } catch (IOException | RuntimeException e) {
+            discard(uri);
+            throw e;
+        }
+        publish(uri);
+        return uri;
+    }
+
+    private byte[] readAll(Uri uri) throws IOException {
+        try (InputStream is = resolver().openInputStream(uri)) {
+            if (is == null) throw new IOException("無法讀取檔案");
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 22);
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+            return bos.toByteArray();
+        }
+    }
+
+    private boolean isDng(Uri uri) {
+        try {
+            String t = resolver().getType(uri);
+            if (t != null && (t.contains("dng") || t.contains("adobe"))) return true;
+            try (Cursor c = resolver().query(uri, new String[]{MediaStore.MediaColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst()) {
+                    String n = c.getString(0);
+                    return n != null && n.toLowerCase(Locale.US).endsWith(".dng");
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /** 以 Camera2 直接拍照(獨占鏡頭;呼叫前 WebView 預覽必須先停止)。 */
+    @PluginMethod
+    public void captureNative(PluginCall call) {
+        final NativeShot.Req r = new NativeShot.Req();
+        r.cameraId = call.getString("cameraId");
+        r.raw = Boolean.TRUE.equals(call.getBoolean("raw", false));
+        r.jpeg = !Boolean.FALSE.equals(call.getBoolean("jpeg", true));
+        Double expMs = call.getDouble("exposureMs", 0.0);
+        r.exposureNs = expMs == null ? 0 : Math.round(expMs * 1e6);
+        Integer iso = call.getInt("iso", 0);
+        r.iso = iso == null ? 0 : iso;
+        Double fm = call.getDouble("focusMeters", 0.0);
+        r.focusMeters = fm == null ? 0f : fm.floatValue();
+        Double ev = call.getDouble("ev", 0.0);
+        r.ev = ev == null ? 0f : ev.floatValue();
+        Integer q = call.getInt("quality", 95);
+        r.jpegQuality = q == null ? 95 : q;
+        r.torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
+        Double cz = call.getDouble("cropZoom", 1.0);
+        Double ca = call.getDouble("cropAspect", 0.0);
+        final double cropZoom = cz == null ? 1.0 : cz;
+        final double cropAspect = ca == null ? 0.0 : ca;
+        final String prefix = call.getString("prefix", "IMG");
+        final LookMath.Params params = parseParams(call.getObject("look"));
+        final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
+        if (r.cameraId == null) {
+            call.reject("缺少 cameraId");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                progress("以原生相機拍攝");
+                NativeShot.Result s = NativeShot.shoot(getContext(), r);
+                JSObject res;
+                if (s.jpeg != null) {
+                    progress("處理 JPEG");
+                    int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
+                    Bitmap bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
+                    if (bmp == null) throw new IOException("JPEG 解碼失敗");
+                    bmp = applyOrientation(bmp, orientation);
+                    res = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, cropZoom, params, keepOriginal);
+                } else {
+                    res = new JSObject();
+                }
+                if (s.dng != null) {
+                    progress("寫入 DNG");
+                    Uri du = writeDng("RAW", s.dng);
+                    res.put("rawUri", du.toString());
+                    if (!res.has("uri")) {
+                        res.put("uri", du.toString());
+                        res.put("width", s.width);
+                        res.put("height", s.height);
+                        res.put("megapixels", s.width * (double) s.height / 1e6);
+                    }
+                }
+                res.put("hasRaw", s.dng != null);
+                res.put("notes", s.notes.toString());
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    /**
+     * DNG 顯影預覽:套用 EV 與線性增益後輸出 JPEG(base64)。
+     * 參數:uri, maxDim, ev, gains[3]
+     */
+    @PluginMethod
+    public void developRaw(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        Integer md = call.getInt("maxDim", 1600);
+        final int maxDim = md == null ? 1600 : md;
+        Double evD = call.getDouble("ev", 0.0);
+        final float ev = evD == null ? 0f : evD.floatValue();
+        final float[] gains = {1f, 1f, 1f};
+        org.json.JSONArray ga = null;
+        try {
+            JSObject o = call.getData();
+            if (o.has("gains")) ga = o.getJSONArray("gains");
+        } catch (Throwable ignored) {
+        }
+        if (ga != null) {
+            try {
+                for (int i = 0; i < 3 && i < ga.length(); i++) gains[i] = (float) ga.getDouble(i);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                Uri uri = Uri.parse(uriStr);
+                RawDev.Dng d = RawDev.parse(readAll(uri));
+                int[] sz = RawDev.size(d);
+                boolean half = maxDim > 0 && Math.max(sz[0], sz[1]) / 2 >= maxDim * 0.75;
+                Bitmap bmp = RawDev.develop(d, half, ev, gains);
+                int longEdge = Math.max(bmp.getWidth(), bmp.getHeight());
+                if (maxDim > 0 && longEdge > maxDim) {
+                    float sc = maxDim / (float) longEdge;
+                    Bitmap sm = Bitmap.createScaledBitmap(bmp, Math.max(1, Math.round(bmp.getWidth() * sc)),
+                            Math.max(1, Math.round(bmp.getHeight() * sc)), true);
+                    if (sm != bmp) bmp.recycle();
+                    bmp = sm;
+                }
+                JSObject r = new JSObject();
+                r.put("data", Base64.encodeToString(toJpeg(bmp, 90), Base64.NO_WRAP));
+                r.put("width", bmp.getWidth());
+                r.put("height", bmp.getHeight());
+                r.put("fullWidth", sz[0]);
+                r.put("fullHeight", sz[1]);
+                r.put("megapixels", sz[0] * (double) sz[1] / 1e6);
+                bmp.recycle();
+                call.resolve(r);
+            } catch (RawDev.Unsupported u) {
+                call.reject("UNSUPPORTED_RAW:" + u.getMessage());
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
     /** 對既有影像套用色彩調整,另存新檔。 */
     @PluginMethod
     public void editImage(PluginCall call) {
@@ -519,6 +707,27 @@ public class CameraToolsPlugin extends Plugin {
             Bitmap bmp = null;
             try {
                 Uri uri = Uri.parse(uriStr);
+                if (isDng(uri)) try {
+                    progress("RAW 顯影");
+                    RawDev.Dng d = RawDev.parse(readAll(uri));
+                    // EV 與白平衡增益在線性空間處理;其餘調整在顯影後套用
+                    bmp = RawDev.develop(d, false, params.ev, new float[]{params.gr, params.gg, params.gb});
+                    LookMath.Params rest = new LookMath.Params();
+                    rest.contrast = params.contrast;
+                    rest.highlights = params.highlights;
+                    rest.shadows = params.shadows;
+                    rest.saturation = params.saturation;
+                    rest.detail = params.detail;
+                    bmp = ensureMutable(bmp);
+                    applyLook(bmp, rest);
+                    progress("編碼 JPEG");
+                    Uri outRaw = writeBitmap(prefix, bmp, quality);
+                    call.resolve(describe(outRaw));
+                    return;
+                } catch (RawDev.Unsupported u) {
+                    progress("此 DNG 無法自行顯影,改用系統解碼");
+                    if (bmp != null) { bmp.recycle(); bmp = null; }
+                }
                 JSObject info = describe(uri);
                 if (info.getDouble("megapixels") > 36.0) {
                     throw new IOException("影像超過 36MP,無法編輯(請對放大前的原圖編輯)");

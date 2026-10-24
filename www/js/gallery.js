@@ -6,6 +6,7 @@ const $ = A.$;
 const { clamp } = A;
 
 const G = A.gallery = { items: [], sel: new Set(), selMode: false };
+A.isRawItem = (it) => !!it && (/dng|adobe/i.test(it.mime || '') || /\.dng$/i.test(it.name || ''));
 
 /* ------------------------------------------------------------------ 縮圖載入佇列 */
 
@@ -72,7 +73,11 @@ function render() {
     const img = document.createElement('img');
     img.dataset.uri = it.uri; img.alt = ''; img.decoding = 'async';
     c.appendChild(img);
-    if (it.type === 'video') {
+    if (A.isRawItem(it)) {
+      const rb = document.createElement('span');
+      rb.className = 'badge raw'; rb.textContent = 'RAW';
+      c.appendChild(rb);
+    } else if (it.type === 'video') {
       const b = document.createElement('span');
       b.className = 'badge'; b.textContent = '▶ ' + fmtDur(it.duration);
       c.appendChild(b);
@@ -139,7 +144,7 @@ document.addEventListener('overlayclose', (e) => { if (e.target && e.target.id =
 
 const V = {
   uri: null, item: null, w: 1, h: 1, fw: 0, fh: 0, vw: 0, vh: 0, s: 1, tx: 0, ty: 0, max: 8,
-  ptrs: new Map(), pinch: null, seq: 0, timer: null, tap: null, lastTap: 0, mp: 0, isVideo: false,
+  ptrs: new Map(), pinch: null, seq: 0, timer: null, tap: null, lastTap: 0, mp: 0, isVideo: false, isRaw: false,
 };
 const vStage = $('vStage'), vContent = $('vContent'), vTile = $('vTile');
 
@@ -169,7 +174,7 @@ function vZoomAt(px, py, ns) {
 }
 function vSchedule() { clearTimeout(V.timer); V.timer = setTimeout(vLoadTile, 260); }
 async function vLoadTile() {
-  if (V.isVideo || V.s < 1.25) { vTile.hidden = true; return; }
+  if (V.isVideo || V.isRaw || V.s < 1.25) { vTile.hidden = true; return; }
   const my = ++V.seq;
   const x0 = clamp(-V.tx / V.s, 0, V.fw), y0 = clamp(-V.ty / V.s, 0, V.fh);
   const x1 = clamp((V.vw - V.tx) / V.s, 0, V.fw), y1 = clamp((V.vh - V.ty) / V.s, 0, V.fh);
@@ -234,10 +239,12 @@ A.showViewerUri = async (uri) => {
   if ($('viewer').hidden) A.openOverlay($('viewer'));
   const item = G.items.find((g) => g.uri === uri) || null;
   V.uri = uri; V.item = item; V.isVideo = !!(item && item.type === 'video');
+  V.isRaw = A.isRawItem(item);
   $('vInfo').textContent = '載入中…';
   vTile.hidden = true;
   $('vPlay').hidden = !V.isVideo;
-  ['vEdit', 'vUpscale', 'vGemini'].forEach((id) => { $(id).hidden = V.isVideo; });
+  $('vEdit').hidden = V.isVideo;
+  ['vUpscale', 'vGemini'].forEach((id) => { $(id).hidden = V.isVideo || V.isRaw; });
   $('vHint').style.opacity = V.isVideo ? 0 : 1;
   setTimeout(() => { $('vHint').style.opacity = 0; }, 4000);
   $('vInfo').style.whiteSpace = 'pre-line';
@@ -252,12 +259,26 @@ A.showViewerUri = async (uri) => {
       $('vInfo').textContent = item.name + '\n' + (item.width || '?') + '×' + (item.height || '?') + ' · ' + fmtDur(item.duration);
       return;
     }
-    const r = await A.needNative().readImage({ uri, maxDim: 2048, quality: 88 });
+    let r;
+    if (V.isRaw) {
+      try {
+        r = await A.needNative().developRaw({ uri, maxDim: 2048, ev: 0, gains: [1, 1, 1] });
+        r.width = r.fullWidth; r.height = r.fullHeight;
+        // 預覽尺寸只用來排版;比例相同即可
+        V.previewW = r.width; V.previewH = r.height;
+      } catch (e) {
+        if (!/UNSUPPORTED_RAW/.test(A.errMsg(e))) throw e;
+        V.isRaw = false;
+        r = await A.needNative().readImage({ uri, maxDim: 2048, quality: 88 });
+      }
+    } else {
+      r = await A.needNative().readImage({ uri, maxDim: 2048, quality: 88 });
+    }
     if (V.uri !== uri) return;
     V.w = r.width; V.h = r.height; V.mp = r.megapixels;
     $('vBase').src = 'data:image/jpeg;base64,' + r.data;
     vLayout();
-    $('vInfo').textContent = (item ? item.name : '') + '\n' + r.width + '×' + r.height + ' · ' + r.megapixels.toFixed(1) + ' MP';
+    $('vInfo').textContent = (item ? item.name : '') + '\n' + r.width + '×' + r.height + ' · ' + r.megapixels.toFixed(1) + ' MP' + (V.isRaw ? ' · RAW(顯影預覽)' : '');
     $('vUpscale').disabled = r.megapixels >= A.settings.targetMP * 0.98;
   } catch (e) { A.toast('無法開啟:' + A.errMsg(e)); }
 };

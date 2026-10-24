@@ -31,13 +31,18 @@ function renderCamList() {
       (d.eq ? ' · 約 ' + Math.round(d.eq) + 'mm(35mm 等效)' : '') +
       (d.native && d.native.sensorMp ? ' · ' + d.native.sensorMp.toFixed(1) + 'MP' : '') +
       (d.aperture ? ' · f/' + d.aperture.toFixed(1) : '') +
+      (d.native && d.native.raw ? ' · RAW' : '') +
       (d.usable ? '' : ' · 不可用') +
       (role ? ' <span class="role">→ ' + role + '</span>' : '');
     box.appendChild(div);
   });
   (S.nativeOnly || []).forEach((n) => {
     const div = document.createElement('div');
-    div.textContent = '#' + n.id + ' 系統有此鏡頭,但 WebView 沒有開放(無法使用)';
+    const roleNat = Object.entries(S.lens).filter(([, l]) => l.nativeId === n.id).map(([k]) => A.ROLE_LABEL[k]).join('/');
+    div.innerHTML = '#' + n.id + (n.facing === 'back' ? ' 後' : n.facing === 'front' ? ' 前' : '') +
+      (n.equivMm ? ' · 約 ' + Math.round(n.equivMm) + 'mm' : '') + (n.raw ? ' · RAW' : '') +
+      (n.hidden ? ' · 隱藏鏡頭(系統未列出,可由原生嘗試開啟)' : ' · WebView 看不到,僅能原生使用') +
+      (roleNat ? ' <span class="role">→ ' + roleNat + '(原生)</span>' : '');
     box.appendChild(div);
   });
   if (!S.devices.length) box.textContent = '尚未偵測到鏡頭';
@@ -64,6 +69,8 @@ function sync() {
   $('setSettle').value = st.hdrSettle;
   $('setApply').checked = st.applyOnCapture;
   $('setKeep').checked = st.keepOriginal;
+  $('setRawJpeg').checked = st.rawJpeg;
+  $('setTeleId').value = st.teleNativeId || '';
   $('setQuality').value = st.jpegQuality;
   $('qVal').textContent = st.jpegQuality;
   $('setMP').value = String(st.targetMP);
@@ -130,6 +137,15 @@ A.bindSettings = () => {
 
   $('setApply').onchange = (e) => { st.applyOnCapture = e.target.checked; A.saveSettings(); };
   $('setKeep').onchange = (e) => { st.keepOriginal = e.target.checked; A.saveSettings(); };
+  $('setRawJpeg').onchange = (e) => { st.rawJpeg = e.target.checked; A.saveSettings(); };
+  $('setTeleId').onchange = async (e) => {
+    st.teleNativeId = e.target.value.replace(/[^0-9]/g, '');
+    e.target.value = st.teleNativeId;
+    A.saveSettings();
+    A.assignLenses();
+    renderCamList();
+    if (S.lensKey && !S.lens[S.lensKey]) await A.startLens(A.chooseLens(S.Z) || 'main');
+  };
   $('setQuality').oninput = (e) => {
     st.jpegQuality = parseInt(e.target.value, 10);
     $('qVal').textContent = st.jpegQuality; A.saveSettings();

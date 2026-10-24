@@ -53,6 +53,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .chips::-webkit-scrollbar { display: none; }
 .chip { flex: none; padding: 7px 11px; border-radius: 16px; background: rgba(40,42,48,.85); font: 600 12px var(--mono); color: #cfd2d8; white-space: nowrap; }
 .chip.on { background: var(--accent-bg); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.chip.off { opacity: .45; }
 .tag { flex: none; max-width: 28%; font: 10.5px var(--mono); color: var(--dim); padding: 3px 7px; border-radius: 9px; background: rgba(0,0,0,.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 底部 */
@@ -155,6 +156,7 @@ textarea.txt { resize: vertical; line-height: 1.5; font-size: 13px; }
 .cell { position: relative; aspect-ratio: 1; background: var(--panel2); overflow: hidden; }
 .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cell .badge { position: absolute; left: 4px; bottom: 4px; font: 600 10px var(--mono); background: rgba(0,0,0,.6); padding: 1px 5px; border-radius: 6px; }
+.cell .badge.raw { background: var(--accent); color: #000; }
 .cell .check { position: absolute; right: 5px; top: 5px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.35); display: none; }
 .sel-mode .cell .check { display: block; }
 .cell.picked .check { background: var(--accent); border-color: var(--accent); }

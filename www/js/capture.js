@@ -95,6 +95,33 @@ async function shootHdr(opts) {
   return N.mergeHdr(Object.assign({ count: evs.length }, opts));
 }
 
+/** 以原生 Camera2 拍攝(RAW / 隱藏的望遠鏡頭)。會暫時釋放 WebView 預覽。 */
+async function shootNative(opts, rawWanted) {
+  const N = A.needNative();
+  const key = S.lensKey;
+  const info = A.nativeLensInfo();
+  const st = A.settings;
+  A.hudSub('釋放預覽,切換原生相機');
+  const man = S.mode === 'manual' && S.man.exp;
+  const args = Object.assign({}, opts, {
+    cameraId: info.id,
+    raw: rawWanted,
+    jpeg: !rawWanted || st.rawJpeg,
+    exposureMs: man && S.man.t ? S.man.t / 10 : 0,
+    iso: man && S.man.iso ? Math.round(S.man.iso) : 0,
+    focusMeters: S.mode === 'manual' && S.focusManual && S.focusDist ? S.focusDist : 0,
+    ev: man ? 0 : S.ev,
+    torch: S.lightMode === 'torch',
+  });
+  A.stopStream();
+  await sleep(300);
+  try {
+    return await N.captureNative(args);
+  } finally {
+    try { await A.startLens(key); A.applyPreviewZoom(); } catch (e) { A.toast('預覽恢復失敗:' + A.errMsg(e), 4000); }
+  }
+}
+
 async function shoot() {
   if (A.busy || !S.track) return;
   A.busy = true;
@@ -104,18 +131,37 @@ async function shoot() {
   try {
     if (navigator.vibrate) navigator.vibrate(15);
     const opts = baseOpts();
-    let res;
-    if (st.hdrOn) res = await shootHdr(opts);
-    else {
-      const blob = await takeStill();
-      A.hudSub('儲存中');
-      res = await A.needNative().saveImage(Object.assign({ data: await A.blobToBase64(blob) }, opts));
+    const info = A.nativeLensInfo();
+    const rawWanted = S.mode === 'manual' && st.rawOn && !!(info && info.raw);
+    const useNative = !!info && (info.virtual || rawWanted);
+    let res = null;
+    if (useNative) {
+      if (st.hdrOn) A.toast('原生拍攝(RAW/隱藏望遠)暫不支援 HDR,改拍單張', 3000);
+      try {
+        res = await shootNative(opts, rawWanted);
+        if (res.notes) A.toast(res.notes, 4000);
+      } catch (e) {
+        if (!info.virtual) throw e;
+        A.toast('望遠鏡頭無法由原生開啟(' + A.errMsg(e) + '),改用主鏡頭數位放大', 6000);
+        opts.cropZoom = S.Z > 1.01 ? S.Z : 1;
+        res = null;
+      }
+    }
+    if (!res) {
+      if (st.hdrOn) res = await shootHdr(opts);
+      else {
+        const blob = await takeStill();
+        A.hudSub('儲存中');
+        res = await A.needNative().saveImage(Object.assign({ data: await A.blobToBase64(blob) }, opts));
+      }
     }
     A.refreshThumb();
-    if (st.autoRestore && st.apiKey && S.within >= st.autoThreshold) {
+    const jpegSaved = !(res.hasRaw && res.uri === res.rawUri);
+    if (jpegSaved && st.autoRestore && st.apiKey && S.within >= st.autoThreshold) {
       try { await A.runGemini(res.uri, true); } catch (e) { A.toast('Gemini 回推失敗:' + A.errMsg(e), 5000); }
     } else {
-      A.toast('已儲存 ' + res.width + '×' + res.height + '(' + res.megapixels.toFixed(1) + ' MP)');
+      A.toast('已儲存 ' + res.width + '×' + res.height + '(' + res.megapixels.toFixed(1) + ' MP)' +
+        (res.hasRaw ? ' + DNG' : ''));
     }
   } catch (e) {
     A.toast('拍攝失敗:' + A.errMsg(e), 5000);
