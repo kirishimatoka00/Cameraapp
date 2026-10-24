@@ -1,0 +1,165 @@
+/* 拍照 / HDR / Gemini 回推 / 放大 */
+(() => {
+'use strict';
+const A = window.A;
+const $ = A.$;
+const S = A.S;
+const { clamp, sleep } = A;
+const video = $('video');
+
+A.refreshHdrChip = () => {
+  const st = A.settings, b = $('btnHdr');
+  if (st.hdrOn) { b.textContent = 'HDR ' + st.hdrCount + '張 ±' + st.hdrRange; b.classList.add('on'); }
+  else { b.textContent = 'HDR 關'; b.classList.remove('on'); }
+  $('btnShutter').classList.toggle('hdr', !!st.hdrOn);
+};
+$('btnHdr').onclick = () => { A.settings.hdrOn = !A.settings.hdrOn; A.saveSettings(); A.refreshHdrChip(); };
+
+A.refreshThumb = async () => {
+  try {
+    const r = await A.needNative().listRecent({ limit: 1 });
+    const it = (r.items || [])[0];
+    if (!it) { $('thumbImg').removeAttribute('src'); return; }
+    const t = await A.needNative().readThumb({ uri: it.uri, size: 160 });
+    $('thumbImg').src = 'data:image/jpeg;base64,' + t.data;
+  } catch (e) { /* ignore */ }
+};
+
+async function takeStill() {
+  if (S.capture) {
+    try {
+      if (!S.photoCaps) S.photoCaps = await S.capture.getPhotoCapabilities();
+      const pc = S.photoCaps, opt = {};
+      if (pc.imageWidth && pc.imageHeight) { opt.imageWidth = pc.imageWidth.max; opt.imageHeight = pc.imageHeight.max; }
+      if (S.lightMode === 'flash' && pc.fillLightMode && pc.fillLightMode.includes('flash')) opt.fillLightMode = 'flash';
+      return await S.capture.takePhoto(opt);
+    } catch (e) { console.warn('takePhoto 失敗,改用預覽畫面', e); }
+  }
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.95));
+}
+
+function buildEvs(n, range, cap) {
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    let v = n === 1 ? 0 : -range + k * (2 * range / (n - 1));
+    if (cap) { v = clamp(v, cap.min, cap.max); if (cap.step) v = Math.round(v / cap.step) * cap.step; }
+    out.push(+v.toFixed(2));
+  }
+  return out;
+}
+
+function baseOpts() {
+  return {
+    cropZoom: S.within > 1.01 ? S.within : 1,
+    cropAspect: S.frameAR,
+    quality: A.settings.jpegQuality,
+    prefix: 'IMG',
+    look: A.captureLookParams(),
+    keepOriginal: !!A.settings.keepOriginal,
+  };
+}
+
+async function shootHdr(opts) {
+  const N = A.needNative();
+  const manual = S.man.exp && S.caps.exposureTime;
+  const cap = S.caps.exposureCompensation;
+  if (!manual && !cap) {
+    A.toast('此鏡頭不支援曝光補償,已改拍單張');
+    return N.saveImage(Object.assign({ data: await A.blobToBase64(await takeStill()) }, opts));
+  }
+  const evs = buildEvs(A.settings.hdrCount, A.settings.hdrRange, manual ? null : cap);
+  if (!manual && Math.max(...evs) - Math.min(...evs) < 0.3) A.toast('裝置曝光補償範圍很小,HDR 效果有限');
+  await N.clearFrames();
+  const userEv = S.ev, userT = S.man.t;
+  try {
+    for (let i = 0; i < evs.length; i++) {
+      A.hudSub('HDR ' + (i + 1) + '/' + evs.length + '(EV ' + (evs[i] > 0 ? '+' : '') + evs[i].toFixed(1) + ')');
+      if (manual) {
+        const et = S.caps.exposureTime;
+        S.man.t = clamp(userT * Math.pow(2, evs[i]), et.min, et.max);
+        await A.applyManualExposure(true);
+      } else {
+        try { await S.track.applyConstraints({ advanced: [{ exposureCompensation: evs[i] }] }); } catch (e) { /* ignore */ }
+      }
+      await sleep(A.settings.hdrSettle);
+      await N.cacheFrame({ index: i, data: await A.blobToBase64(await takeStill()) });
+    }
+  } finally {
+    if (manual) { S.man.t = userT; await A.applyManualExposure(true); }
+    else { try { await S.track.applyConstraints({ advanced: [{ exposureCompensation: userEv }] }); } catch (e) { /* ignore */ } }
+  }
+  A.hudSub('合成 HDR');
+  return N.mergeHdr(Object.assign({ count: evs.length }, opts));
+}
+
+async function shoot() {
+  if (A.busy || !S.track) return;
+  A.busy = true;
+  const st = A.settings;
+  $('btnShutter').classList.add('busy');
+  A.hud(st.hdrOn ? '拍攝 HDR' : '拍攝中', '請保持穩定');
+  try {
+    if (navigator.vibrate) navigator.vibrate(15);
+    const opts = baseOpts();
+    let res;
+    if (st.hdrOn) res = await shootHdr(opts);
+    else {
+      const blob = await takeStill();
+      A.hudSub('儲存中');
+      res = await A.needNative().saveImage(Object.assign({ data: await A.blobToBase64(blob) }, opts));
+    }
+    A.refreshThumb();
+    if (st.autoRestore && st.apiKey && S.within >= st.autoThreshold) {
+      try { await A.runGemini(res.uri, true); } catch (e) { A.toast('Gemini 回推失敗:' + A.errMsg(e), 5000); }
+    } else {
+      A.toast('已儲存 ' + res.width + '×' + res.height + '(' + res.megapixels.toFixed(1) + ' MP)');
+    }
+  } catch (e) {
+    A.toast('拍攝失敗:' + A.errMsg(e), 5000);
+  } finally {
+    A.hudHide();
+    A.busy = false;
+    $('btnShutter').classList.remove('busy');
+  }
+}
+
+$('btnShutter').onclick = () => {
+  if (S.mode === 'video') { if (A.toggleRecord) A.toggleRecord(); } else shoot();
+};
+
+/* ------------------------------------------------------------------ Gemini / 放大 */
+
+/** opts: { prompt, prefix } */
+A.runGemini = async (uri, silentOpen, opts) => {
+  const st = A.settings;
+  opts = opts || {};
+  if (!st.apiKey) { A.toast('請先在設定輸入 Gemini API key'); A.openOverlay($('settings')); return null; }
+  const model = A.effectiveModel();
+  if (!model) { A.toast('請在設定選擇或輸入模型 ID'); return null; }
+  A.hud(opts.hudTitle || 'Gemini 回推中', '最高 4K 輸出,可能需要 30~120 秒');
+  const r = await A.needNative().geminiRestore({
+    uri, apiKey: st.apiKey.trim(), model, imageSize: st.imageSize,
+    prompt: opts.prompt || st.prompt || A.DEFAULT_PROMPT, maxInputDim: st.maxInput,
+    quality: st.jpegQuality, prefix: opts.prefix || 'AI',
+  });
+  A.refreshThumb();
+  A.toast('完成:' + r.width + '×' + r.height + '(' + r.megapixels.toFixed(1) + ' MP)', 3500);
+  if (!silentOpen && A.showViewerUri) await A.showViewerUri(r.uri);
+  return r;
+};
+
+A.runUpscale = async (uri) => {
+  A.hud('放大中', '正在配置大型畫布…');
+  const st = A.settings;
+  const r = await A.needNative().upscale({ uri, targetMegapixels: st.targetMP, quality: st.jpegQuality });
+  A.refreshThumb();
+  let m = '完成:' + r.width + '×' + r.height + '(' + r.megapixels.toFixed(1) + ' MP)';
+  if (r.actualMp && r.actualMp < st.targetMP - 0.5) m += ',記憶體不足已降級';
+  A.toast(m, 4000);
+  if (A.showViewerUri) await A.showViewerUri(r.uri);
+  return r;
+};
+})();

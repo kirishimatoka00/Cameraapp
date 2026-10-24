@@ -16,7 +16,9 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.media.ExifInterface;
+import android.content.Intent;
 import android.net.Uri;
+import android.util.Size;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -33,6 +35,13 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import com.google.android.gms.tasks.Tasks;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.face.Face;
+import com.google.mlkit.vision.face.FaceDetection;
+import com.google.mlkit.vision.face.FaceDetector;
+import com.google.mlkit.vision.face.FaceDetectorOptions;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -47,11 +56,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.List;
 import java.util.Iterator;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 原生輔助外掛:
@@ -69,6 +82,8 @@ public class CameraToolsPlugin extends Plugin {
     private static final String GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
+    private final ExecutorService faceExec = Executors.newSingleThreadExecutor();
+    private final ExecutorService vexec = Executors.newSingleThreadExecutor();
 
     // ------------------------------------------------------------------ 共用工具
 
@@ -307,6 +322,11 @@ public class CameraToolsPlugin extends Plugin {
                     o.put("equivMm", fl[0] * 43.2666 / diag);
                 }
 
+                float[] aps = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES);
+                JSArray apArr = new JSArray();
+                if (aps != null) for (float a : aps) apArr.put((double) a);
+                o.put("apertures", apArr);
+
                 Rect pa = cc.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
                 if (pa != null) o.put("sensorMp", pa.width() * (double) pa.height() / 1e6);
 
@@ -347,6 +367,100 @@ public class CameraToolsPlugin extends Plugin {
 
     // ------------------------------------------------------------------ 存圖 / 讀圖
 
+    // ------------------------------------------------------------------ 色彩/裁切共用
+
+    private static LookMath.Params parseParams(JSObject o) {
+        LookMath.Params p = new LookMath.Params();
+        if (o == null) return p;
+        p.ev = (float) o.optDouble("ev", 0);
+        p.contrast = (float) o.optDouble("contrast", 0);
+        p.highlights = (float) o.optDouble("highlights", 0);
+        p.shadows = (float) o.optDouble("shadows", 0);
+        p.saturation = (float) o.optDouble("saturation", 0);
+        p.detail = (float) o.optDouble("detail", 0);
+        JSONArray g = o.optJSONArray("gains");
+        if (g != null && g.length() >= 3) {
+            p.gr = (float) g.optDouble(0, 1);
+            p.gg = (float) g.optDouble(1, 1);
+            p.gb = (float) g.optDouble(2, 1);
+        }
+        return p;
+    }
+
+    private static Bitmap centerCropAspect(Bitmap src, double aspect) {
+        if (aspect <= 0) return src;
+        int w = src.getWidth(), h = src.getHeight();
+        double cur = w / (double) h;
+        if (Math.abs(cur - aspect) < 0.004) return src;
+        int cw = w, ch = h;
+        if (cur > aspect) cw = (int) Math.round(h * aspect);
+        else ch = (int) Math.round(w / aspect);
+        cw = Math.max(16, Math.min(w, cw));
+        ch = Math.max(16, Math.min(h, ch));
+        Bitmap r = Bitmap.createBitmap(src, (w - cw) / 2, (h - ch) / 2, cw, ch);
+        if (r != src) src.recycle();
+        return r;
+    }
+
+    private static Bitmap ensureMutable(Bitmap b) {
+        if (b.isMutable()) return b;
+        Bitmap c = b.copy(Bitmap.Config.ARGB_8888, true);
+        if (c == null) throw new OutOfMemoryError();
+        b.recycle();
+        return c;
+    }
+
+    /** 就地套用色彩調整(bmp 必須可變)。 */
+    private void applyLook(Bitmap bmp, LookMath.Params p) {
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        if (!p.pixelNeutral()) {
+            final int rowsPer = 64;
+            int[] strip = new int[w * rowsPer];
+            for (int y0 = 0; y0 < h; y0 += rowsPer) {
+                int rows = Math.min(rowsPer, h - y0);
+                bmp.getPixels(strip, 0, w, 0, y0, w, rows);
+                LookMath.apply(strip, 0, w * rows, p);
+                bmp.setPixels(strip, 0, w, 0, y0, w, rows);
+            }
+        }
+        if (p.detail > 0f) {
+            if ((long) w * h > 30_000_000L) {
+                progress("影像超過 30MP,略過細節增強");
+            } else {
+                progress("細節增強");
+                int[] px = new int[w * h];
+                bmp.getPixels(px, 0, w, 0, 0, w, h);
+                LookMath.unsharp(px, w, h, LookMath.detailAmount(p.detail), LookMath.detailRadius(w, h));
+                bmp.setPixels(px, 0, w, 0, 0, w, h);
+            }
+        }
+    }
+
+    /** 裁切 → 變焦裁切 → (保留原始)→ 色彩調整 → 存檔。回傳含 uri / originalUri。 */
+    private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
+                                   LookMath.Params p, boolean keepOriginal) throws IOException {
+        bmp = centerCropAspect(bmp, aspect);
+        bmp = centerCrop(bmp, zoom);
+        Uri original = null;
+        try {
+            if (!p.neutral() && keepOriginal) {
+                original = writeBitmap(prefix + "_ORG", bmp, quality);
+            }
+            if (!p.neutral()) {
+                bmp = ensureMutable(bmp);
+                applyLook(bmp, p);
+            }
+            Uri out = writeBitmap(prefix, bmp, quality);
+            JSObject res = describe(out);
+            if (original != null) res.put("originalUri", original.toString());
+            return res;
+        } finally {
+            bmp.recycle();
+        }
+    }
+
+    // ------------------------------------------------------------------ 存圖 / 讀圖
+
     @PluginMethod
     public void saveImage(PluginCall call) {
         final String data = call.getString("data");
@@ -355,18 +469,71 @@ public class CameraToolsPlugin extends Plugin {
             return;
         }
         Double cz = call.getDouble("cropZoom", 1.0);
+        Double ca = call.getDouble("cropAspect", 0.0);
         Integer q = call.getInt("quality", 95);
         final double cropZoom = cz == null ? 1.0 : cz;
+        final double cropAspect = ca == null ? 0.0 : ca;
         final int quality = q == null ? 95 : q;
         final String prefix = call.getString("prefix", "IMG");
+        final LookMath.Params params = parseParams(call.getObject("look"));
+        final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
         exec.execute(() -> {
             try {
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
-                byte[] out = normalizeJpeg(bytes, cropZoom, quality);
-                Uri uri = writeBytes(prefix, out);
-                call.resolve(describe(uri));
+                int orientation = orientationOf(new ByteArrayInputStream(bytes));
+                BitmapFactory.Options b = new BitmapFactory.Options();
+                b.inJustDecodeBounds = true;
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, b);
+                boolean swap = orientation >= ExifInterface.ORIENTATION_TRANSPOSE
+                        && orientation <= ExifInterface.ORIENTATION_ROTATE_270;
+                int uw = swap ? b.outHeight : b.outWidth, uh = swap ? b.outWidth : b.outHeight;
+                boolean needAspect = cropAspect > 0 && uh > 0 && Math.abs(uw / (double) uh - cropAspect) >= 0.004;
+                if (orientation == ExifInterface.ORIENTATION_NORMAL && cropZoom <= 1.01 && !needAspect
+                        && params.neutral()) {
+                    call.resolve(describe(writeBytes(prefix, bytes)));
+                    return;
+                }
+                Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bmp == null) throw new IOException("影像解碼失敗");
+                bmp = applyOrientation(bmp, orientation);
+                call.resolve(finishAndSave(bmp, prefix, quality, cropAspect, cropZoom, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
+            }
+        });
+    }
+
+    /** 對既有影像套用色彩調整,另存新檔。 */
+    @PluginMethod
+    public void editImage(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        Integer q = call.getInt("quality", 95);
+        final int quality = q == null ? 95 : q;
+        final String prefix = call.getString("prefix", "EDIT");
+        final LookMath.Params params = parseParams(call.getObject("look"));
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            Bitmap bmp = null;
+            try {
+                Uri uri = Uri.parse(uriStr);
+                JSObject info = describe(uri);
+                if (info.getDouble("megapixels") > 36.0) {
+                    throw new IOException("影像超過 36MP,無法編輯(請對放大前的原圖編輯)");
+                }
+                progress("讀取原圖");
+                bmp = loadUpright(uri, 0);
+                bmp = ensureMutable(bmp);
+                applyLook(bmp, params);
+                progress("編碼 JPEG");
+                Uri out = writeBitmap(prefix, bmp, quality);
+                call.resolve(describe(out));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            } finally {
+                if (bmp != null) bmp.recycle();
             }
         });
     }
@@ -457,43 +624,286 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
+    private void queryMedia(Uri base, boolean video, int limit, List<JSObject> out) {
+        Bundle args = new Bundle();
+        args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION, MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?");
+        args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, new String[]{
+                (video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES) + "/" + ALBUM + "%"});
+        args.putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                MediaStore.MediaColumns.DATE_ADDED + " DESC, " + MediaStore.MediaColumns._ID + " DESC");
+        args.putInt(ContentResolver.QUERY_ARG_LIMIT, limit);
+        String[] proj = video
+                ? new String[]{MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DURATION}
+                : new String[]{MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.MIME_TYPE};
+        try (Cursor c = resolver().query(base, proj, args, null)) {
+            if (c == null) return;
+            while (c.moveToNext()) {
+                JSObject o = new JSObject();
+                o.put("uri", ContentUris.withAppendedId(base, c.getLong(0)).toString());
+                o.put("name", c.getString(1));
+                o.put("width", c.getInt(2));
+                o.put("height", c.getInt(3));
+                o.put("date", c.getLong(4));
+                o.put("mime", c.getString(5));
+                o.put("type", video ? "video" : "image");
+                if (video) o.put("duration", c.getLong(6));
+                out.add(o);
+            }
+        }
+    }
+
     @PluginMethod
     public void listRecent(PluginCall call) {
         Integer lim = call.getInt("limit", 60);
         final int limit = lim == null ? 60 : lim;
         exec.execute(() -> {
             try {
-                Bundle args = new Bundle();
-                args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
-                        MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?");
-                args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
-                        new String[]{Environment.DIRECTORY_PICTURES + "/" + ALBUM + "%"});
-                args.putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
-                        MediaStore.MediaColumns.DATE_ADDED + " DESC, " + MediaStore.MediaColumns._ID + " DESC");
-                args.putInt(ContentResolver.QUERY_ARG_LIMIT, limit);
-                String[] proj = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
-                        MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT};
+                List<JSObject> all = new ArrayList<>();
+                queryMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false, limit, all);
+                queryMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, limit, all);
+                Collections.sort(all, (x, y) -> Long.compare(y.optLong("date"), x.optLong("date")));
                 JSArray arr = new JSArray();
-                try (Cursor c = resolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj, args, null)) {
-                    if (c != null) {
-                        while (c.moveToNext()) {
-                            long id = c.getLong(0);
-                            JSObject o = new JSObject();
-                            o.put("uri", ContentUris.withAppendedId(
-                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString());
-                            o.put("name", c.getString(1));
-                            o.put("width", c.getInt(2));
-                            o.put("height", c.getInt(3));
-                            arr.put(o);
-                        }
-                    }
-                }
+                for (int i = 0; i < all.size() && i < limit; i++) arr.put(all.get(i));
                 JSObject res = new JSObject();
                 res.put("items", arr);
                 call.resolve(res);
             } catch (Throwable t) {
                 call.reject(msg(t));
             }
+        });
+    }
+
+    @PluginMethod
+    public void readThumb(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        Integer sz = call.getInt("size", 256);
+        final int size = sz == null ? 256 : sz;
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                Bitmap bm = resolver().loadThumbnail(Uri.parse(uriStr), new Size(size, size), null);
+                JSObject r = new JSObject();
+                r.put("data", Base64.encodeToString(toJpeg(bm, 80), Base64.NO_WRAP));
+                bm.recycle();
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void deleteImages(PluginCall call) {
+        final JSArray arr = call.getArray("uris");
+        if (arr == null) {
+            call.reject("缺少 uris");
+            return;
+        }
+        exec.execute(() -> {
+            int deleted = 0, failed = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    String u = arr.getString(i);
+                    if (resolver().delete(Uri.parse(u), null, null) > 0) deleted++;
+                    else failed++;
+                } catch (Throwable t) {
+                    failed++;
+                }
+            }
+            JSObject res = new JSObject();
+            res.put("deleted", deleted);
+            res.put("failed", failed);
+            call.resolve(res);
+        });
+    }
+
+    @PluginMethod
+    public void openExternal(PluginCall call) {
+        try {
+            String u = call.getString("uri");
+            String mime = call.getString("mime", "video/*");
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(Uri.parse(u), mime);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Throwable t) {
+            call.reject(msg(t));
+        }
+    }
+
+    @PluginMethod
+    public void exportFile(PluginCall call) {
+        final String name = call.getString("name", "AICamera_export.json");
+        final String text = call.getString("text", "");
+        final String mime = call.getString("mime", "application/json");
+        exec.execute(() -> {
+            try {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + ALBUM);
+                Uri uri = resolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) throw new IOException("無法建立檔案");
+                try (OutputStream os = resolver().openOutputStream(uri)) {
+                    if (os == null) throw new IOException("無法寫入檔案");
+                    os.write(text.getBytes(StandardCharsets.UTF_8));
+                }
+                JSObject r = new JSObject();
+                r.put("uri", uri.toString());
+                r.put("path", Environment.DIRECTORY_DOWNLOADS + "/" + ALBUM + "/" + name);
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ 人臉偵測(ML Kit)
+
+    private FaceDetector faceDetector;
+
+    private synchronized FaceDetector detector() {
+        if (faceDetector == null) {
+            FaceDetectorOptions o = new FaceDetectorOptions.Builder()
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                    .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                    .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                    .setMinFaceSize(0.04f)
+                    .enableTracking()
+                    .build();
+            faceDetector = FaceDetection.getClient(o);
+        }
+        return faceDetector;
+    }
+
+    /** 傳入縮小後的 JPEG(base64),回傳正規化人臉框,依面積由大到小,最多 max 個。 */
+    @PluginMethod
+    public void detectFaces(PluginCall call) {
+        final String data = call.getString("data");
+        Integer mx = call.getInt("max", 10);
+        final int max = mx == null ? 10 : mx;
+        if (data == null) {
+            call.reject("缺少影像");
+            return;
+        }
+        faceExec.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bmp == null) throw new IOException("影像解碼失敗");
+                final int w = bmp.getWidth(), h = bmp.getHeight();
+                List<Face> faces = Tasks.await(detector().process(InputImage.fromBitmap(bmp, 0)), 4, TimeUnit.SECONDS);
+                bmp.recycle();
+                List<Face> sorted = new ArrayList<>(faces);
+                Collections.sort(sorted, (a, b) -> Integer.compare(
+                        b.getBoundingBox().width() * b.getBoundingBox().height(),
+                        a.getBoundingBox().width() * a.getBoundingBox().height()));
+                JSArray arr = new JSArray();
+                for (int i = 0; i < sorted.size() && i < max; i++) {
+                    Face f = sorted.get(i);
+                    Rect bb = f.getBoundingBox();
+                    JSObject o = new JSObject();
+                    o.put("x", Math.max(0.0, bb.left / (double) w));
+                    o.put("y", Math.max(0.0, bb.top / (double) h));
+                    o.put("w", Math.min(1.0, bb.width() / (double) w));
+                    o.put("h", Math.min(1.0, bb.height() / (double) h));
+                    Integer tid = f.getTrackingId();
+                    o.put("id", tid == null ? -1 : tid);
+                    arr.put(o);
+                }
+                JSObject res = new JSObject();
+                res.put("faces", arr);
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ 影片(分段寫入,避免整支影片進記憶體)
+
+    private OutputStream vOut;
+    private Uri vUri;
+
+    @PluginMethod
+    public void beginVideo(PluginCall call) {
+        final String mime = call.getString("mime", "video/mp4");
+        vexec.execute(() -> {
+            try {
+                closeVideo(true);
+                String ext = mime.contains("webm") ? "webm" : "mp4";
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, "VID_" + stamp() + "." + ext);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, mime.contains("webm") ? "video/webm" : "video/mp4");
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + ALBUM);
+                v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                vUri = resolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v);
+                if (vUri == null) throw new IOException("無法建立影片檔案");
+                vOut = resolver().openOutputStream(vUri);
+                if (vOut == null) throw new IOException("無法寫入影片檔案");
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void appendVideo(PluginCall call) {
+        final String data = call.getString("data");
+        vexec.execute(() -> {
+            try {
+                if (vOut == null) throw new IOException("尚未開始錄影");
+                vOut.write(Base64.decode(data, Base64.DEFAULT));
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    private void closeVideo(boolean discardPending) {
+        try {
+            if (vOut != null) vOut.close();
+        } catch (IOException ignored) {
+        }
+        vOut = null;
+        if (vUri != null && discardPending) discard(vUri);
+        vUri = null;
+    }
+
+    @PluginMethod
+    public void finishVideo(PluginCall call) {
+        vexec.execute(() -> {
+            try {
+                if (vOut == null || vUri == null) throw new IOException("沒有進行中的錄影");
+                vOut.close();
+                vOut = null;
+                publish(vUri);
+                JSObject r = new JSObject();
+                r.put("uri", vUri.toString());
+                vUri = null;
+                call.resolve(r);
+            } catch (Throwable t) {
+                closeVideo(true);
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void abortVideo(PluginCall call) {
+        vexec.execute(() -> {
+            closeVideo(true);
+            call.resolve();
         });
     }
 
@@ -608,13 +1018,16 @@ public class CameraToolsPlugin extends Plugin {
         Integer c = call.getInt("count", 3);
         Integer q = call.getInt("quality", 95);
         Double cz = call.getDouble("cropZoom", 1.0);
+        Double ca = call.getDouble("cropAspect", 0.0);
         final int count = c == null ? 3 : c;
         final int quality = q == null ? 95 : q;
         final double cropZoom = cz == null ? 1.0 : cz;
+        final double cropAspect = ca == null ? 0.0 : ca;
+        final LookMath.Params params = parseParams(call.getObject("look"));
+        final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
         exec.execute(() -> {
             try {
-                Uri uri = fuseFrames(count, quality, cropZoom);
-                call.resolve(describe(uri));
+                call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
             }
@@ -666,7 +1079,8 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     /** 曝光融合(Mertens 概念:對比 × 飽和度 × 曝光良好度),分條帶處理避免吃光記憶體。 */
-    private Uri fuseFrames(int n, int quality, double cropZoom) throws Exception {
+    private JSObject fuseFrames(int n, int quality, double cropZoom, double cropAspect,
+                                LookMath.Params params, boolean keepOriginal) throws Exception {
         File dir = getContext().getCacheDir();
         File[] files = new File[n];
         BitmapRegionDecoder[] dec = new BitmapRegionDecoder[n];
@@ -779,13 +1193,8 @@ public class CameraToolsPlugin extends Plugin {
             progress("套用方向與裁切");
             Bitmap fin = applyOrientation(out, orientation);
             out = null;
-            fin = centerCrop(fin, cropZoom);
             progress("編碼 JPEG");
-            try {
-                return writeBitmap("HDR", fin, quality);
-            } finally {
-                fin.recycle();
-            }
+            return finishAndSave(fin, "HDR", quality, cropAspect, cropZoom, params, keepOriginal);
         } finally {
             for (BitmapRegionDecoder d : dec) if (d != null) d.recycle();
             if (out != null) out.recycle();
@@ -932,6 +1341,7 @@ public class CameraToolsPlugin extends Plugin {
         final String model = call.getString("model", "gemini-nano-banana-2.1");
         final String imageSize = call.getString("imageSize", "4K");
         final String prompt = call.getString("prompt", "");
+        final String outPrefix = call.getString("prefix", "AI" + imageSize);
         Integer md = call.getInt("maxInputDim", 2048);
         Integer q = call.getInt("quality", 95);
         final int maxInput = md == null ? 2048 : md;
@@ -1011,11 +1421,11 @@ public class CameraToolsPlugin extends Plugin {
                 byte[] raw = Base64.decode(img[1], Base64.DEFAULT);
                 Uri out;
                 if (img[0].contains("jpeg") || img[0].contains("jpg")) {
-                    out = writeBytes("AI" + imageSize, raw);
+                    out = writeBytes(outPrefix, raw);
                 } else {
                     Bitmap bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
                     if (bmp == null) throw new IOException("無法解碼 Gemini 回傳影像");
-                    out = writeBitmap("AI" + imageSize, bmp, quality);
+                    out = writeBitmap(outPrefix, bmp, quality);
                     bmp.recycle();
                 }
                 JSObject res = describe(out);

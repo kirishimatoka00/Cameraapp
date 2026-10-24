@@ -9,88 +9,198 @@
 </head>
 <body>
 
-<div id="app">
+<!-- 預覽用色彩濾鏡(由 look.js 更新參數) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="lookfx" x="0" y="0" width="100%" height="100%">
+      <feColorMatrix id="fx1" in="SourceGraphic" type="matrix" color-interpolation-filters="linearRGB"
+        values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"/>
+      <feComponentTransfer color-interpolation-filters="sRGB">
+        <feFuncR id="fx2r" type="table" tableValues="0 1"/>
+        <feFuncG id="fx2g" type="table" tableValues="0 1"/>
+        <feFuncB id="fx2b" type="table" tableValues="0 1"/>
+      </feComponentTransfer>
+      <feColorMatrix id="fx3" type="saturate" values="1" color-interpolation-filters="sRGB"/>
+    </filter>
+  </defs>
+</svg>
+
+<div id="app" data-ratio="3:4" data-mode="photo">
+
+  <!-- 取景區 -->
+  <div id="viewfinder">
+    <div id="frame">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="gridLines" hidden></div>
+      <canvas id="overlay"></canvas>
+      <div id="reticle"></div>
+      <canvas id="hist" width="120" height="48"></canvas>
+      <div id="zoomBadge" class="zoom-badge">1.0×</div>
+      <div id="recBadge" class="rec-badge" hidden>● REC 00:00</div>
+      <div id="infoLine" class="info-line"></div>
+    </div>
+  </div>
+
   <!-- 頂部列 -->
-  <header class="topbar">
-    <button class="icon-btn" id="btnSettings" aria-label="設定">⚙</button>
-    <button class="chip" id="btnHdr" aria-label="HDR 開關">HDR 關</button>
-    <button class="icon-btn" id="btnLight" aria-label="閃光燈">🚫</button>
-    <div class="grow"></div>
+  <header id="topbar">
+    <button class="tb" id="btnSettings" aria-label="設定">⚙</button>
+    <button class="tb" id="btnLight" aria-label="閃光燈">🚫</button>
+    <div class="chips" id="topChips">
+      <button class="chip" id="btnHdr">HDR 關</button>
+      <button class="chip" id="btnRatio">3:4</button>
+      <button class="chip" id="btnGrid">格線</button>
+      <button class="chip" id="btnFocusAssist">對焦 單點</button>
+      <button class="chip" id="btnProfile">標準</button>
+    </div>
     <div id="lensTag" class="tag">—</div>
   </header>
 
-  <!-- 取景 -->
-  <main class="stage" id="stage">
-    <div class="frame" id="frame">
-      <video id="video" autoplay playsinline muted></video>
-      <div id="reticle"></div>
+  <!-- 底部控制 -->
+  <section id="bottom">
+    <div id="paramRow" class="param-row" hidden>
+      <span class="plabel" id="paramLabel">快門</span>
+      <input type="range" id="paramRange" min="0" max="100" step="0.5" value="50">
+      <span class="pval" id="paramVal">—</span>
+      <button class="mini" id="paramAuto">自動</button>
     </div>
-    <div id="zoomBadge" class="zoom-badge">1.0×</div>
-  </main>
 
-  <!-- 鏡頭與變焦 -->
-  <section class="lens-area">
-    <input type="range" id="zoomRange" min="0" max="100" step="0.5" value="26.4" aria-label="變焦">
-    <div class="lens-row" id="lensRow"></div>
+    <div class="readouts" id="readouts">
+      <button class="ro" data-p="shutter"><small>快門</small><b id="roShutter">AUTO</b></button>
+      <button class="ro" data-p="iso"><small>ISO</small><b id="roIso">AUTO</b></button>
+      <button class="ro" data-p="ev"><small>EV</small><b id="roEv">0.0</b></button>
+      <button class="ro" data-p="wb"><small>白平衡</small><b id="roWb">AUTO</b></button>
+      <button class="ro" data-p="aperture"><small>光圈</small><b id="roAp">—</b></button>
+      <button class="ro" data-p="focus"><small>對焦</small><b id="roFocus">AF</b></button>
+    </div>
+
+    <div class="video-opts" id="videoOpts" hidden>
+      <div class="seg" id="segRes">
+        <button data-v="1080P">1080P</button><button data-v="2K">2K</button><button data-v="4K">4K</button><button data-v="8K">8K</button>
+      </div>
+      <div class="seg" id="segFps">
+        <button data-v="30">30</button><button data-v="60">60</button>
+      </div>
+    </div>
+
+    <div class="lens-area">
+      <input type="range" id="zoomRange" min="0" max="100" step="0.5" value="26.4" aria-label="變焦">
+      <div class="lens-row" id="lensRow"></div>
+    </div>
+
+    <div class="mode-tabs" id="modeTabs">
+      <button data-mode="photo" class="on">照片</button>
+      <button data-mode="manual">手動</button>
+      <button data-mode="video">影片</button>
+    </div>
+
+    <div class="shutter-bar">
+      <button class="thumb" id="btnThumb" aria-label="相簿"><img id="thumbImg" alt=""></button>
+      <button class="shutter" id="btnShutter" aria-label="拍照"><span></span></button>
+      <button class="round-btn" id="btnColor" aria-label="色彩與白平衡">🎨</button>
+    </div>
   </section>
+</div>
 
-  <!-- 專業控制(EV / 手動對焦) -->
-  <section class="pro-panel" id="proPanel" hidden>
-    <div class="slider-row">
-      <span class="lbl">EV</span>
-      <input type="range" id="evRange" min="-3" max="3" step="0.1" value="0">
-      <span class="val" id="evVal">0.0</span>
+<!-- 色彩面板(底部抽屜) -->
+<div id="colorSheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <h2>色彩與白平衡</h2>
+      <button class="mini" id="csReset">重設</button>
+      <button class="icon-btn small" id="csClose" aria-label="關閉">✕</button>
     </div>
-    <div class="slider-row">
-      <button class="mini" id="btnFocusMode">AF</button>
-      <input type="range" id="focusRange" min="0" max="100" step="1" value="0" disabled>
-      <span class="val" id="focusVal">自動</span>
-    </div>
-  </section>
+    <div class="sheet-body" id="csBody"></div>
+  </div>
+</div>
 
-  <!-- 快門列 -->
-  <footer class="shutter-bar">
-    <button class="thumb" id="btnThumb" aria-label="開啟相簿"><img id="thumbImg" alt=""></button>
-    <button class="shutter" id="btnShutter" aria-label="拍照"><span></span></button>
-    <button class="icon-btn big" id="btnPro" aria-label="專業控制">◐</button>
-  </footer>
+<!-- 色彩檔案選單 -->
+<div id="profileSheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <h2>色彩檔案</h2>
+      <button class="icon-btn small" id="psClose" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="profile-list" id="profileList"></div>
+      <div class="inline">
+        <input type="text" id="profileName" class="txt" placeholder="自訂檔案名稱">
+        <button class="act small" id="btnSaveProfile">儲存目前設定</button>
+      </div>
+      <p class="note">自訂檔案會記住目前的 EV、對比、亮部、陰影、飽和度、色調、色溫、白平衡與細節增強,可在設定頁匯出。</p>
+    </div>
+  </div>
+</div>
+
+<!-- 相簿 -->
+<div id="gallery" class="overlay" hidden>
+  <div class="bar">
+    <button class="icon-btn" id="gBack" aria-label="返回">‹</button>
+    <h1 id="gTitle">相簿</h1>
+    <div class="grow"></div>
+    <button class="mini" id="gSelect">選取</button>
+  </div>
+  <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div><div class="empty" id="gEmpty" hidden>還沒有照片</div></div>
+  <div class="bar bottom" id="gSelBar" hidden>
+    <button class="mini" id="gAll">全選</button>
+    <div class="grow" id="gCount">已選 0</div>
+    <button class="act small danger" id="gDelete">刪除</button>
+  </div>
 </div>
 
 <!-- 檢視器 -->
 <div id="viewer" class="overlay" hidden>
-  <div class="viewer-top">
-    <button class="icon-btn" id="vClose" aria-label="關閉">✕</button>
+  <div class="bar">
+    <button class="icon-btn" id="vClose" aria-label="關閉">‹</button>
     <div class="grow viewer-info" id="vInfo">—</div>
-    <button class="icon-btn" id="vPrev" aria-label="上一張">‹</button>
-    <button class="icon-btn" id="vNext" aria-label="下一張">›</button>
+    <button class="icon-btn" id="vPrev" aria-label="較舊">‹</button>
+    <button class="icon-btn" id="vNext" aria-label="較新">›</button>
   </div>
   <div class="viewer-stage" id="vStage">
     <div class="viewer-content" id="vContent">
       <img id="vBase" alt="">
       <img id="vTile" alt="">
     </div>
+    <button class="play-btn" id="vPlay" hidden>▶ 播放</button>
     <div class="viewer-hint" id="vHint">雙指縮放、雙擊放大;放大後會自動載入原生像素</div>
   </div>
-  <div class="viewer-actions">
-    <button class="act" id="vUpscale">🔍 放大至 1 億畫素</button>
-    <button class="act accent" id="vGemini">✨ Gemini 4K 回推</button>
+  <div class="viewer-actions" id="vActions">
+    <button class="act" id="vEdit">✎ 編輯</button>
+    <button class="act" id="vUpscale">🔍 1 億畫素</button>
+    <button class="act accent" id="vGemini">✨ AI 回推</button>
+    <button class="act danger" id="vDelete">🗑</button>
   </div>
+</div>
+
+<!-- 編輯器 -->
+<div id="editor" class="overlay" hidden>
+  <div class="bar">
+    <button class="icon-btn" id="eBack" aria-label="返回">‹</button>
+    <h1>編輯</h1>
+    <div class="grow"></div>
+    <button class="mini" id="eReset">重設</button>
+    <button class="act small primary" id="eSave">儲存</button>
+  </div>
+  <div class="editor-stage" id="eStage">
+    <canvas id="eCanvas"></canvas>
+    <div class="pick-hint" id="ePickHint" hidden>點擊畫面中應為中性灰/白的位置</div>
+  </div>
+  <div class="editor-panel" id="ePanel"></div>
 </div>
 
 <!-- 設定頁 -->
 <div id="settings" class="overlay" hidden>
-  <div class="settings-top">
+  <div class="bar">
     <button class="icon-btn" id="sClose" aria-label="返回">‹</button>
     <h1>設定</h1>
   </div>
   <div class="settings-body">
 
     <section class="card">
-      <h2>Gemini AI 回推</h2>
+      <h2>Gemini AI</h2>
       <label class="field">
         <span>API Key</span>
         <div class="inline">
-          <input type="password" id="setKey" placeholder="貼上 Gemini API key" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <input type="password" id="setKey" class="txt" placeholder="貼上 Gemini API key" autocomplete="off" autocapitalize="off" spellcheck="false">
           <button class="mini" id="btnShowKey" type="button">顯示</button>
         </div>
         <small>金鑰只存放在本機,送出影像時會直接傳給 Google。</small>
@@ -101,113 +211,103 @@
       </div>
       <label class="field">
         <span>模型</span>
-        <select id="setModel">
+        <select id="setModel" class="txt">
           <option value="gemini-nano-banana-2.1">Nano Banana 2.1(gemini-nano-banana-2.1,預設)</option>
           <option value="gemini-3-pro-image">Nano Banana Pro(gemini-3-pro-image)</option>
           <option value="gemini-3.1-flash-image">Nano Banana 2(gemini-3.1-flash-image)</option>
           <option value="__custom">自訂模型 ID…</option>
         </select>
-        <input type="text" id="setModelCustom" placeholder="輸入模型 ID" hidden>
+        <input type="text" id="setModelCustom" class="txt" placeholder="輸入模型 ID" hidden>
       </label>
       <label class="field">
         <span>輸出解析度(上限 4K)</span>
-        <select id="setSize">
-          <option value="1K">1K</option>
-          <option value="2K">2K</option>
-          <option value="4K">4K</option>
-        </select>
+        <select id="setSize" class="txt"><option value="1K">1K</option><option value="2K">2K</option><option value="4K">4K</option></select>
       </label>
       <label class="field">
         <span>送出前縮小到(長邊像素)</span>
-        <select id="setMaxInput">
-          <option value="1536">1536</option>
-          <option value="2048">2048</option>
-          <option value="3072">3072</option>
-        </select>
+        <select id="setMaxInput" class="txt"><option value="1536">1536</option><option value="2048">2048</option><option value="3072">3072</option></select>
       </label>
-      <label class="switch">
-        <input type="checkbox" id="setAuto"><span>數位變焦拍攝後自動回推</span>
+      <label class="switch"><input type="checkbox" id="setAuto"><span>數位變焦拍攝後自動回推</span></label>
+      <label class="field">
+        <span>自動回推門檻(數位倍率 ≥)</span>
+        <input type="number" id="setThreshold" class="txt" min="1" max="10" step="0.1">
+        <small>數位倍率 = 目前變焦 ÷ 所用鏡頭的光學倍率。</small>
       </label>
       <label class="field">
-        <span>自動回推門檻(數位變焦倍率 ≥)</span>
-        <input type="number" id="setThreshold" min="1" max="10" step="0.1">
-        <small>數位倍率 = 目前變焦 ÷ 所用鏡頭的光學倍率,例如 2x 望遠上拍 5×,數位倍率為 2.5。</small>
-      </label>
-      <label class="field">
-        <span>回推提示詞</span>
-        <textarea id="setPrompt" rows="6"></textarea>
+        <span>回推提示詞(數位變焦)</span>
+        <textarea id="setPrompt" class="txt" rows="5"></textarea>
         <button class="mini" id="btnResetPrompt" type="button">還原預設</button>
       </label>
-      <p class="note">AI 回推是由模型依畫面推測並合成細節,結果可能與實際景物有出入(文字、人臉、紋理尤其如此),不適合用於需要如實記錄的場合。</p>
+      <label class="field">
+        <span>AI 強化提示詞(編輯器)</span>
+        <textarea id="setEnhance" class="txt" rows="4"></textarea>
+        <button class="mini" id="btnResetEnhance" type="button">還原預設</button>
+      </label>
+      <p class="note">AI 回推/強化是模型依畫面推測並合成細節,結果可能與實景有出入(文字、人臉、紋理尤其如此),不適合需要如實記錄的場合。</p>
+    </section>
+
+    <section class="card">
+      <h2>取景與對焦</h2>
+      <label class="switch"><input type="checkbox" id="setHist"><span>顯示直方圖</span></label>
+      <label class="switch"><input type="checkbox" id="setFaceAuto"><span>人臉模式:自動對焦最大的人臉</span></label>
+      <p class="note">人臉模式最多同時標示 10 張臉,點擊臉框可指定對焦對象;「追焦」模式點擊畫面中的物體後會持續追蹤並更新對焦點。</p>
     </section>
 
     <section class="card">
       <h2>HDR 合成</h2>
-      <label class="switch">
-        <input type="checkbox" id="setHdrOn"><span>預設開啟 HDR</span>
-      </label>
+      <label class="switch"><input type="checkbox" id="setHdrOn"><span>預設開啟 HDR</span></label>
       <label class="field">
         <span>合成張數</span>
-        <select id="setHdrCount">
-          <option value="3">3 張</option>
-          <option value="5">5 張</option>
-          <option value="7">7 張</option>
-          <option value="9">9 張</option>
-        </select>
+        <select id="setHdrCount" class="txt"><option value="3">3 張</option><option value="5">5 張</option><option value="7">7 張</option><option value="9">9 張</option></select>
       </label>
       <label class="field">
         <span>EV 範圍(±)</span>
-        <select id="setHdrRange">
-          <option value="0.5">±0.5 EV</option>
-          <option value="1">±1 EV</option>
-          <option value="1.5">±1.5 EV</option>
-          <option value="2">±2 EV</option>
-          <option value="2.5">±2.5 EV</option>
-          <option value="3">±3 EV</option>
+        <select id="setHdrRange" class="txt">
+          <option value="0.5">±0.5 EV</option><option value="1">±1 EV</option><option value="1.5">±1.5 EV</option>
+          <option value="2">±2 EV</option><option value="2.5">±2.5 EV</option><option value="3">±3 EV</option>
         </select>
-        <small>各張 EV 會在 −範圍 ~ +範圍 間等距分佈,並自動限制在鏡頭支援的曝光補償範圍內。</small>
+        <small>手動模式下改以快門時間 ×2^EV 做包圍曝光。</small>
       </label>
       <label class="field">
         <span>每張曝光穩定等待(毫秒)</span>
-        <input type="number" id="setSettle" min="200" max="2000" step="50">
+        <input type="number" id="setSettle" class="txt" min="200" max="2000" step="50">
       </label>
-      <p class="note">HDR 為手持連拍合成,畫面移動會產生殘影,建議靠穩或使用腳架。</p>
     </section>
 
     <section class="card">
-      <h2>輸出</h2>
+      <h2>色彩與輸出</h2>
+      <label class="switch"><input type="checkbox" id="setApply"><span>拍攝時套用目前色彩設定</span></label>
+      <label class="switch"><input type="checkbox" id="setKeep"><span>同時保留未調色的原始檔</span></label>
       <label class="field">
         <span>JPEG 品質:<b id="qVal">95</b></span>
         <input type="range" id="setQuality" min="80" max="100" step="1">
       </label>
       <label class="field">
         <span>放大目標</span>
-        <select id="setMP">
-          <option value="100">1 億畫素(100 MP)</option>
-          <option value="75">7,500 萬畫素</option>
-          <option value="50">5,000 萬畫素</option>
-        </select>
-        <small>若手機記憶體不足會自動降級到較小的畫素。放大為插值演算,不會憑空增加真實細節;想要更多細節請先用 Gemini 回推。</small>
+        <select id="setMP" class="txt"><option value="100">1 億畫素(100 MP)</option><option value="75">7,500 萬畫素</option><option value="50">5,000 萬畫素</option></select>
+        <small>放大為插值演算,不會增加真實細節;記憶體不足時自動降級。</small>
       </label>
+      <button class="act" id="btnManageProfiles" type="button">管理色彩檔案…</button>
     </section>
 
     <section class="card">
       <h2>鏡頭對應</h2>
-      <label class="field">
-        <span>廣角(0.5×)</span>
-        <select id="mapWide"></select>
-      </label>
-      <label class="field">
-        <span>主鏡頭(1×)</span>
-        <select id="mapMain"></select>
-      </label>
-      <label class="field">
-        <span>望遠(2×,Note 10+)</span>
-        <select id="mapTele"></select>
-      </label>
+      <label class="field"><span>廣角(0.5×)</span><select id="mapWide" class="txt"></select></label>
+      <label class="field"><span>主鏡頭(1×)</span><select id="mapMain" class="txt"></select></label>
+      <label class="field"><span>望遠(2×,Note 10+)</span><select id="mapTele" class="txt"></select></label>
       <div class="cam-list" id="camList"></div>
       <button class="act small" id="btnRescan" type="button">重新偵測鏡頭</button>
-      <p class="note">部分 Samsung 機型只會把部分實體鏡頭開放給第三方 App。若望遠鏡頭未出現在清單,2× 會改用主鏡頭數位裁切。</p>
+    </section>
+
+    <section class="card">
+      <h2>設定檔</h2>
+      <label class="switch"><input type="checkbox" id="expKey"><span>匯出時包含 API key</span></label>
+      <div class="inline">
+        <button class="act" id="btnExport" type="button">匯出設定檔</button>
+        <button class="act" id="btnImport" type="button">匯入設定檔</button>
+      </div>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <p class="note">匯出的 JSON 會存到「下載/AICamera」,內容包含所有設定、目前色彩與自訂色彩檔案。</p>
     </section>
 
     <section class="card">
@@ -217,15 +317,23 @@
   </div>
 </div>
 
-<!-- 處理中 -->
 <div id="hud" class="hud" hidden>
   <div class="spinner"></div>
   <div class="hud-main" id="hudMain">處理中…</div>
   <div class="hud-sub" id="hudSub"></div>
 </div>
-
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js"></script>
+<script src="js/core.js"></script>
+<script src="js/look.js"></script>
+<script src="js/lookui.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/vision.js"></script>
+<script src="js/capture.js"></script>
+<script src="js/video.js"></script>
+<script src="js/gallery.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/settingsui.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>
