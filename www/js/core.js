@@ -66,7 +66,7 @@ A.DEFAULTS = {
   keepOriginal: true,
   rawOn: false,
   selfieMirror: true,
-  keepSize: true,
+  zoomOutMp: 9,
   rawJpeg: true,
   teleNativeId: '',
   // 影片

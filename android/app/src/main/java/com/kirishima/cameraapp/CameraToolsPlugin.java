@@ -474,16 +474,20 @@ public class CameraToolsPlugin extends Plugin {
 
     /** 裁切 → 變焦裁切 → (保留原始)→ 色彩調整 → 存檔。回傳含 uri / originalUri。 */
     private volatile boolean mirrorFlag;
-    private volatile boolean keepSizeFlag;
+    private volatile double targetMpFlag;
 
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
         bmp = centerCropAspect(bmp, aspect);
-        final int fullW = bmp.getWidth(), fullH = bmp.getHeight();
         bmp = centerCrop(bmp, zoom);
-        if (keepSizeFlag && zoom > 1.01 && (bmp.getWidth() < fullW || bmp.getHeight() < fullH)) {
-            progress("放大回原尺寸");
-            bmp = resizeSmooth(bmp, fullW, fullH);
+        if (targetMpFlag > 0 && zoom > 1.01) {
+            double have = (double) bmp.getWidth() * bmp.getHeight();
+            double want = targetMpFlag * 1e6;
+            if (want > have * 1.05) {
+                progress("放大到 " + targetMpFlag + " MP");
+                double f = Math.sqrt(want / have);
+                bmp = resizeSmooth(bmp, (int) Math.round(bmp.getWidth() * f), (int) Math.round(bmp.getHeight() * f));
+            }
         }
         if (mirrorFlag) {
             Matrix mm = new Matrix();
@@ -532,7 +536,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
-                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
+                targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -632,7 +636,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
-                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
+                targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -1443,7 +1447,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirrorHdr;
-                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
+                targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1465,7 +1469,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
-                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
+                targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
                 call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));

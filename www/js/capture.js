@@ -69,7 +69,7 @@ function baseOpts() {
     look: A.captureLookParams(),
     keepOriginal: !!A.settings.keepOriginal,
     mirror: !!(S.front && A.settings.selfieMirror),
-    keepSize: !!A.settings.keepSize,
+    zoomOutMp: A.settings.zoomOutMp || 0,
   };
 }
 
