@@ -86,7 +86,12 @@ A.assignLenses = () => {
   if (wide && wide !== main) S.lens.wide = { dev: wide, ratio: Math.min(ratioOf(wide, 0.5), 0.9) };
   if (main) S.lens.main = { dev: main, ratio: 1 };
   if (tele && tele !== main) S.lens.tele = { dev: tele, ratio: S.front ? Math.max(1.1, Math.round((tele.eq / mainEq) * 10) / 10) : Math.max(ratioOf(tele, 2), 1.5) };
-  else if (main && !tele && !S.front) {
+  else if (main && !tele && S.front) {
+    // 前鏡頭:WebView 只列出一顆時,以原生清單中另一顆前鏡頭當第二顆(預覽共用,拍攝走 Camera2)
+    const fc = (S.nativeAll || []).filter((n) => n.facing === 'front' && n.id !== main.id && n.usable !== false && n.equivMm > 0 && mainEq > 0 && n.equivMm >= mainEq * 1.05 && ['1', '3'].includes(n.id))
+      .sort((a, b) => a.equivMm - b.equivMm)[0];
+    if (fc) S.lens.tele = { dev: main, ratio: Math.max(1.1, Math.round((fc.equivMm / mainEq) * 10) / 10), base: 1, nativeId: fc.id, native: fc };
+  } else if (main && !tele && !S.front) {
     // WebView 看不到望遠鏡頭 → 找系統隱藏的原生鏡頭(例如 Note 10+ 的 ID 4)
     const manual = (A.settings.teleNativeId || '').trim();
     const cand = (S.nativeOnly || []).filter((n) => n.facing === 'back' && n.equivMm > 0 && mainEq > 0 && n.equivMm >= mainEq * 1.5)
@@ -178,7 +183,8 @@ function updateLensTag() {
   if (!L) { $('lensTag').textContent = '—'; return; }
   const eq = L.nativeId ? (L.native && L.native.equivMm) : L.dev.eq;
   const mm = eq ? ' ' + Math.round(eq) + 'mm' : '';
-  $('lensTag').textContent = (S.front ? { wide: '前置廣角', main: '前置 1', tele: '前置 2' } : ROLE_LABEL)[S.lensKey] + mm + (L.nativeId ? ' · 原生#' + L.nativeId : '');
+  $('lensTag').textContent = (S.front ? { wide: '前置廣角', main: '前置 1', tele: '前置 2' } : ROLE_LABEL)[S.lensKey] + mm + (L.nativeId ? ' · 原生#' + L.nativeId : '') +
+    (S.within > 1.01 ? ' · 數位 ' + S.within.toFixed(1) + '×' : '');
 }
 
 /* ------------------------------------------------------------------ 取景框比例與版面 */
@@ -290,6 +296,7 @@ A.applyPreviewZoom = () => {
     css = Math.max(1, prevWithin / z);
   }
   S.cssZoom = css;
+  updateLensTag();
   video.style.transform = (S.front ? 'scaleX(-1) ' : '') + (css > 1.001 ? 'scale(' + css.toFixed(3) + ')' : '');
   const badge = $('zoomBadge');
   badge.textContent = S.Z.toFixed(S.Z < 10 ? 1 : 0) + '×';
@@ -326,7 +333,7 @@ A.renderLensButtons = () => {
   const row = $('lensRow');
   row.innerHTML = '';
   const ratios = lensRatios();
-  const set = new Set([1, 2, 5, 10].concat(ratios));
+  const set = new Set([1, 1.5, 2, 3, 5, 10].concat(ratios));
   const presets = Array.from(set).filter((p) => p >= minZoom() - 0.001).sort((a, b) => a - b);
   presets.forEach((p) => {
     const b = document.createElement('button');
