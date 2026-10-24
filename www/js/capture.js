@@ -138,6 +138,7 @@ async function shootNative(opts, rawWanted) {
     torch: S.lightMode === 'torch',
   });
   A.stopStream();
+  await A.stopNativePrev();
   await sleep(300);
   try {
     return await N.captureNative(args);
@@ -147,7 +148,7 @@ async function shootNative(opts, rawWanted) {
 }
 
 async function shoot() {
-  if (A.busy || !S.track) return;
+  if (A.busy || (!S.track && !S.nativePrev)) return;
   A.busy = true;
   const st = A.settings;
   $('btnShutter').classList.add('busy');
@@ -169,6 +170,8 @@ async function shoot() {
         A.toast('望遠鏡頭無法由原生開啟(' + A.errMsg(e) + '),改用主鏡頭數位放大', 6000);
         opts.cropZoom = S.Z > 1.01 ? S.Z : 1;
         res = null;
+        A.forceWeb = true;
+        try { await A.startLens(S.lensKey); } catch (e2) { /* ignore */ }
       }
     }
     if (!res) {
@@ -193,6 +196,7 @@ async function shoot() {
   } catch (e) {
     A.toast('拍攝失敗:' + A.errMsg(e), 5000);
   } finally {
+    A.forceWeb = false;
     A.hudHide();
     A.busy = false;
     $('btnShutter').classList.remove('busy');

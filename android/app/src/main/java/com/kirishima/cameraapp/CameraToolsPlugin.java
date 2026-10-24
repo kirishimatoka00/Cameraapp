@@ -1082,6 +1082,52 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ 原生 Camera2 預覽(隱藏鏡頭)
+
+    private NativePreview np;
+
+    @PluginMethod
+    public void startNativePreview(PluginCall call) {
+        final String id = call.getString("cameraId", "0");
+        final int left = call.getInt("left", 0), top = call.getInt("top", 0);
+        final int w = call.getInt("w", 0), hh = call.getInt("h", 0);
+        final boolean mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
+        final boolean torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
+        final double zoom = call.getDouble("zoom", 1.0);
+        vexec.execute(() -> {
+            try {
+                if (np != null) { np.stop(); np = null; }
+                NativePreview v = new NativePreview(getActivity(), id, left, top, w, hh, mirror);
+                v.setInitialZoom((float) zoom, torch);
+                np = v;
+                v.start(getBridge().getWebView());
+                JSObject r = new JSObject();
+                r.put("size", v.info);
+                call.resolve(r);
+            } catch (Throwable t) {
+                np = null;
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void setPreviewZoom(PluginCall call) {
+        NativePreview v = np;
+        if (v != null) v.setZoom(call.getFloat("zoom", 1f));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopNativePreview(PluginCall call) {
+        vexec.execute(() -> {
+            NativePreview v = np;
+            np = null;
+            if (v != null) v.stop();
+            call.resolve();
+        });
+    }
+
     // ------------------------------------------------------------------ 原生 Camera2 錄影
 
     private NativeVideo nv;

@@ -28,7 +28,7 @@ async function init() {
 
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden) {
-    if (!S.recording) A.stopStream();
+    if (!S.recording) { A.stopStream(); A.stopNativePrev(); }
   } else if (S.lensKey && !S.stream && !S.starting) {
     S.starting = true;
     try { await A.startLens(S.lensKey); A.applyPreviewZoom(); } catch (e) { /* ignore */ }

@@ -139,10 +139,62 @@ async function openPhotoStream(id) {
   }
 }
 
+/* ------------------------------------------------------------------ 原生預覽(隱藏的望遠鏡頭) */
+
+async function stopNativePrev() {
+  if (!S.nativePrev) return;
+  S.nativePrev = false;
+  document.documentElement.classList.remove('native-rec');
+  try { await A.needNative().stopNativePreview(); } catch (e) { /* ignore */ }
+}
+A.stopNativePrev = stopNativePrev;
+
+function nativeRect() {
+  const r = frame.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  return { left: Math.round(r.left * dpr), top: Math.round(r.top * dpr), w: Math.round(r.width * dpr), h: Math.round(r.height * dpr) };
+}
+
+async function startNativePrev(L) {
+  const rc = nativeRect();
+  document.documentElement.classList.add('native-rec');
+  S.nativeStarting = true;
+  try {
+    await A.needNative().startNativePreview(Object.assign({
+      cameraId: String(L.nativeId), zoom: Math.max(1, S.within || 1),
+      mirror: !!(S.front && A.settings.selfieMirror), torch: S.lightMode === 'torch',
+    }, rc));
+    S.nativePrev = true;
+    S.nativePrevKey = [rc.left, rc.top, rc.w, rc.h].join(',');
+  } catch (e) {
+    document.documentElement.classList.remove('native-rec');
+    throw e;
+  } finally {
+    S.nativeStarting = false;
+  }
+}
+
 A.startLens = async (key) => {
   const L = S.lens[key];
   if (!L) return false;
+  if (S.nativePrev) await stopNativePrev();
   stopStream();
+  if (L.nativeId && S.mode !== 'video' && A.settings.nativePreview !== false && !A.forceWeb) {
+    S.lensKey = key;
+    S.caps = {};
+    S.within = Math.max(1, S.Z / L.ratio);
+    A.layoutFrame();
+    await new Promise((res) => setTimeout(res, 250));
+    try {
+      await startNativePrev(L);
+      updateLensTag();
+      A.updateRawChip();
+      A.applyPreviewZoom();
+      A.refreshReadouts();
+      return true;
+    } catch (e) {
+      A.toast('原生預覽失敗,改用主鏡頭預覽:' + A.errMsg(e), 5000);
+    }
+  }
   const id = { exact: L.dev.deviceId };
   const stream = S.mode === 'video' ? await A.openVideoStream(id) : await openPhotoStream(id);
   S.stream = stream;
@@ -220,6 +272,10 @@ A.layoutFrame = () => {
   app.dataset.overlay = overlayUI ? '1' : '0';
   app.dataset.ratio = ratio;
   A.resizeOverlay();
+  if (S.nativePrev && !S.nativeStarting) {
+    const r = nativeRect();
+    if ([r.left, r.top, r.w, r.h].join(',') !== S.nativePrevKey) { S.nativePrevKey = ''; setTimeout(() => { if (S.nativePrev && !A.busy) A.restartLens(); }, 80); }
+  }
 };
 new ResizeObserver(() => A.layoutFrame()).observe($('bottom'));
 new ResizeObserver(() => A.layoutFrame()).observe($('topbar'));
@@ -286,7 +342,10 @@ A.applyPreviewZoom = () => {
   S.within = Math.max(1, S.Z / ratio);              // 相對「拍攝鏡頭」的數位倍率(裁切用)
   const prevWithin = Math.max(1, S.Z / base);
   let css = prevWithin;
-  if (S.recording && A.nativeVideoZoom) {
+  if (S.nativePrev) {
+    A.needNative().setPreviewZoom({ zoom: S.within }).catch(() => {});
+    css = 1;
+  } else if (S.recording && A.nativeVideoZoom) {
     A.nativeVideoZoom();
     css = 1;
   } else if (S.mode === 'video' && S.caps.zoom && S.track) {
@@ -316,7 +375,8 @@ A.setZoom = async (Z, allowSwitch) => {
     if (key && key !== S.lensKey) {
       S.switching = true;
       const cur = S.lens[S.lensKey];
-      if (cur && S.lens[key].dev === cur.dev && S.stream) {
+      const nativeSwitch = A.settings.nativePreview !== false && S.mode !== 'video' && (S.lens[key].nativeId || (cur && cur.nativeId));
+      if (cur && S.lens[key].dev === cur.dev && S.stream && !nativeSwitch) {
         S.lensKey = key;            // 虛擬望遠與主鏡頭共用預覽,不必重開串流
         updateLensTag();
         A.updateRawChip();

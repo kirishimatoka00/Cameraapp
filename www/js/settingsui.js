@@ -73,6 +73,7 @@ function sync() {
   $('setKeep').checked = st.keepOriginal;
   $('setRawJpeg').checked = st.rawJpeg;
   $('setMirror').checked = st.selfieMirror;
+  $('setNativePrev').checked = st.nativePreview !== false;
   $('setZoomMp').value = String(st.zoomOutMp == null ? 9 : st.zoomOutMp);
   $('setTeleId').value = st.teleNativeId || '';
   $('setQuality').value = st.jpegQuality;
@@ -144,6 +145,7 @@ A.bindSettings = () => {
 
   $('setApply').onchange = (e) => { st.applyOnCapture = e.target.checked; A.saveSettings(); };
   $('setKeep').onchange = (e) => { st.keepOriginal = e.target.checked; A.saveSettings(); };
+  $('setNativePrev').onchange = async (e) => { st.nativePreview = e.target.checked; A.saveSettings(); try { await A.restartLens(); } catch (e2) { /* ignore */ } };
   $('setZoomMp').onchange = (e) => { st.zoomOutMp = parseFloat(e.target.value); A.saveSettings(); };
   $('setMirror').onchange = (e) => { st.selfieMirror = e.target.checked; A.saveSettings(); };
   $('setRawJpeg').onchange = (e) => { st.rawJpeg = e.target.checked; A.saveSettings(); };
