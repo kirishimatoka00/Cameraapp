@@ -92,8 +92,9 @@ A.assignLenses = () => {
     const cand = (S.nativeOnly || []).filter((n) => n.facing === 'back' && n.equivMm > 0 && mainEq > 0 && n.equivMm >= mainEq * 1.5)
       .sort((a, b) => a.equivMm - b.equivMm)[0] || null;
     // Note 10+:以 com.samsung.android.ruler 身分執行時,邏輯鏡頭 21 即 2× 望遠
+    const id52 = (S.nativeAll || []).find((n) => n.id === '52' && n.facing === 'back') || null;
     const id21 = (S.nativeAll || []).find((n) => n.id === '21' && n.facing === 'back') || null;
-    const info = manual ? ((S.nativeAll || []).find((n) => n.id === manual) || { id: manual }) : (id21 || cand);
+    const info = manual ? ((S.nativeAll || []).find((n) => n.id === manual) || { id: manual }) : (id52 || id21 || cand);
     if (info && info.id !== main.id) {
       const r = info.equivMm && mainEq ? Math.max(2, Math.round((info.equivMm / mainEq) * 2) / 2) : 2;  // 隱藏望遠至少視為 2×
       S.lens.tele = { dev: main, ratio: r, base: 1, nativeId: info.id, native: info };

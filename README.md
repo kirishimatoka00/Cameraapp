@@ -43,5 +43,5 @@ cd android && ./gradlew assembleDebug
 
 ## Note 10+ 望遠鏡頭(套件名稱偽裝)
 
-Samsung 相機服務只對白名單套件開放隱藏鏡頭。本 App 的套件名稱為 `com.samsung.android.ruler`(參考 mattpilz.com 的作法),此時邏輯鏡頭 **ID 21** 即 2× 望遠。
+Samsung 相機服務只對白名單套件開放隱藏鏡頭。本 App 的套件名稱為 `com.samsung.android.ruler`(參考 mattpilz.com 的作法),此時ID **52**(實測為原生望遠;邏輯鏡頭 21 為備用)即 2× 望遠。
 安裝前必須先在手機上**解除安裝系統的「快速測量(Quick Measure / Ruler)」**,否則簽章衝突無法安裝;舊版 AI Camera Pro(com.kirishima.cameraapp)是另一個 App,可自行移除。
