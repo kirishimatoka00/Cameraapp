@@ -83,6 +83,7 @@ const S = {
 
 const video = $('video');
 const frame = $('frame');
+const stage = $('stage');
 
 /* ------------------------------------------------------------------ 小工具 UI */
 
@@ -233,7 +234,10 @@ async function startLens(key) {
   S.track = stream.getVideoTracks()[0];
   S.lensKey = key;
   video.srcObject = stream;
-  try { await video.play(); } catch (e) { /* autoplay */ }
+  try { await video.play(); } catch (e) { toast('預覽播放失敗:' + errMsg(e), 4000); }
+  setTimeout(() => {
+    if (S.track && video.readyState < 2) toast('相機沒有輸出畫面(#' + L.dev.id + '),可到設定改選其他鏡頭', 5000);
+  }, 2500);
   S.caps = S.track.getCapabilities ? S.track.getCapabilities() : {};
   if (window.ImageCapture) {
     try { S.capture = new ImageCapture(S.track); } catch (e) { S.capture = null; }
@@ -246,11 +250,20 @@ async function startLens(key) {
 }
 
 function updateFrameAspect() {
-  const w = video.videoWidth, h = video.videoHeight;
-  if (w && h) frame.style.aspectRatio = w + ' / ' + h;
+  // 依影像比例與可用空間計算取景框尺寸(video 為絕對定位,不能靠 aspect-ratio 撐開)
+  const sw = stage.clientWidth, sh = stage.clientHeight;
+  if (!sw || !sh) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const ar = vw && vh ? vw / vh : 3 / 4;
+  let w = sw, h = sw / ar;
+  if (h > sh) { h = sh; w = sh * ar; }
+  frame.style.width = Math.floor(w) + 'px';
+  frame.style.height = Math.floor(h) + 'px';
 }
 video.addEventListener('loadedmetadata', updateFrameAspect);
 video.addEventListener('resize', updateFrameAspect);
+video.addEventListener('playing', updateFrameAspect);
+window.addEventListener('resize', updateFrameAspect);
 
 async function applyBaseControls() {
   const adv = [];
@@ -321,7 +334,6 @@ function renderLensButtons() {
 }
 
 /* 雙指縮放 + 點擊對焦 */
-const stage = $('stage');
 const ptrs = new Map();
 let pinch = null;
 let tapInfo = null;
