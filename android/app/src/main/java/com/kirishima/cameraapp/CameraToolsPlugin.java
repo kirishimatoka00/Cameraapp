@@ -1429,6 +1429,82 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ 多張合成超解析
+
+    @PluginMethod
+    public void mergeSuperRes(PluginCall call) {
+        final int count = call.getInt("count", 6);
+        final int quality = call.getInt("quality", 95);
+        final double cropZoom = call.getDouble("cropZoom", 2.0);
+        final double cropAspect = call.getDouble("cropAspect", 0.0);
+        final LookMath.Params params = parseParams(call.getObject("look"));
+        final boolean keepOriginal = Boolean.TRUE.equals(call.getBoolean("keepOriginal", true));
+        final boolean mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
+        exec.execute(() -> {
+            try {
+                mirrorFlag = mirror;
+                call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    private JSObject superRes(int n, int quality, double zoom, double cropAspect,
+                              LookMath.Params params, boolean keepOriginal) throws Exception {
+        File dir = getContext().getCacheDir();
+        File[] files = new File[n];
+        for (int i = 0; i < n; i++) {
+            files[i] = new File(dir, "hdr_" + i + ".jpg");
+            if (!files[i].exists()) throw new IOException("缺少連拍影格 " + i);
+        }
+        int W, H;
+        BitmapRegionDecoder d0 = BitmapRegionDecoder.newInstance(files[0].getAbsolutePath(), false);
+        W = d0.getWidth();
+        H = d0.getHeight();
+        d0.recycle();
+        int orientation;
+        try (InputStream is = new java.io.FileInputStream(files[0])) {
+            orientation = orientationOf(is);
+        }
+        double z = Math.max(1.0, zoom);
+        int rw = Math.max(64, ((int) Math.round(W / z)) & ~1);
+        int rh = Math.max(64, ((int) Math.round(H / z)) & ~1);
+        // 記憶體保護:區域越大,可用影格越少
+        long regionPx = (long) rw * rh;
+        int use = regionPx > 4_500_000L ? Math.min(n, 4) : n;
+        int rx = (W - rw) / 2, ry = (H - rh) / 2;
+        float U = (float) Math.max(1.5, Math.min(4.0, z));
+        int outW = Math.round(rw * U), outH = Math.round(rh * U);
+        int[][] fr = new int[use][];
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        for (int i = 0; i < use; i++) {
+            progress("讀取影格 " + (i + 1) + "/" + use);
+            BitmapRegionDecoder d = BitmapRegionDecoder.newInstance(files[i].getAbsolutePath(), false);
+            try {
+                if (d.getWidth() != W || d.getHeight() != H) throw new IOException("連拍影格尺寸不一致,請重拍");
+                Bitmap b = d.decodeRegion(new Rect(rx, ry, rx + rw, ry + rh), o);
+                if (b == null) throw new IOException("影格解碼失敗");
+                fr[i] = new int[rw * rh];
+                b.getPixels(fr[i], 0, rw, 0, 0, rw, rh);
+                b.recycle();
+            } finally {
+                d.recycle();
+            }
+        }
+        int[] merged = SuperRes.merge(fr, rw, rh, U, outW, outH, this::progress);
+        fr = null;
+        progress("銳化");
+        LookMath.unsharp(merged, outW, outH, 0.7f, Math.max(1, Math.round(Math.max(outW, outH) / 2500f)));
+        Bitmap out = Bitmap.createBitmap(merged, outW, outH, Bitmap.Config.ARGB_8888);
+        Bitmap fin = applyOrientation(out, orientation);
+        progress("編碼 JPEG");
+        JSObject res = finishAndSave(fin, "SR", quality, cropAspect, 1.0, params, keepOriginal);
+        res.put("frames", use);
+        return res;
+    }
+
     private static float[] wellTable() {
         float[] t = new float[256];
         for (int i = 0; i < 256; i++) {

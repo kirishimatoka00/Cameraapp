@@ -44,6 +44,8 @@ A.DEFAULTS = {
   enhancePrompt: A.DEFAULT_ENHANCE_PROMPT,
   // HDR
   hdrOn: false,
+  srOn: false,
+  srCount: 6,
   hdrCount: 5,
   hdrRange: 2,
   hdrSettle: 550,

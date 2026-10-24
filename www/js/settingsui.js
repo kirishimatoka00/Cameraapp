@@ -64,6 +64,8 @@ function sync() {
   $('setHist').checked = st.histogram;
   $('setFaceAuto').checked = st.faceAuto;
   $('setHdrOn').checked = st.hdrOn;
+  $('setSrOn').checked = !!st.srOn;
+  $('setSrCount').value = String(st.srCount);
   $('setHdrCount').value = String(st.hdrCount);
   $('setHdrRange').value = String(st.hdrRange);
   $('setSettle').value = st.hdrSettle;
@@ -87,6 +89,7 @@ A.syncSettingsUI = sync;
 /** 設定變動後,讓整個 UI 與相機狀態跟上 */
 A.applySettingsToUi = () => {
   A.refreshHdrChip();
+  A.refreshSrChip();
   A.updateRatioChip();
   A.updateGrid();
   A.updateFocusChip();
@@ -129,6 +132,8 @@ A.bindSettings = () => {
   $('setFaceAuto').onchange = (e) => { st.faceAuto = e.target.checked; A.saveSettings(); };
 
   $('setHdrOn').onchange = (e) => { st.hdrOn = e.target.checked; A.saveSettings(); A.refreshHdrChip(); };
+  $('setSrOn').onchange = (e) => { st.srOn = e.target.checked; A.saveSettings(); A.refreshSrChip(); };
+  $('setSrCount').onchange = (e) => { st.srCount = parseInt(e.target.value, 10); A.saveSettings(); A.refreshSrChip(); };
   $('setHdrCount').onchange = (e) => { st.hdrCount = parseInt(e.target.value, 10); A.saveSettings(); A.refreshHdrChip(); };
   $('setHdrRange').onchange = (e) => { st.hdrRange = parseFloat(e.target.value); A.saveSettings(); A.refreshHdrChip(); };
   $('setSettle').onchange = (e) => {

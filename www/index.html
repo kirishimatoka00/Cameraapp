@@ -49,6 +49,7 @@
     <div class="chips" id="topChips">
       <button class="chip" id="btnRaw" hidden>RAW</button>
       <button class="chip" id="btnHdr">HDR 關</button>
+      <button class="chip" id="btnSR">超解析 關</button>
       <button class="chip" id="btnRatio">3:4</button>
       <button class="chip" id="btnGrid">格線</button>
       <button class="chip" id="btnFocusAssist">對焦 單點</button>
@@ -257,6 +258,12 @@
 
     <section class="card">
       <h2>HDR 合成</h2>
+      <label class="switch"><input type="checkbox" id="setSrOn"><span>預設開啟「多張合成超解析」(數位變焦 ≥1.5× 時連拍合成)</span></label>
+      <label class="field">
+        <span>超解析連拍張數</span>
+        <select id="setSrCount" class="txt"><option value="4">4 張</option><option value="6">6 張</option><option value="8">8 張</option></select>
+        <small>手持的細微晃動提供亞像素資訊;三腳架固定時效果有限。移動物體會自動排除。若同時開啟 HDR,以超解析優先。</small>
+      </label>
       <label class="switch"><input type="checkbox" id="setHdrOn"><span>預設開啟 HDR</span></label>
       <label class="field">
         <span>合成張數</span>

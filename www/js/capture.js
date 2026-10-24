@@ -13,6 +13,15 @@ A.refreshHdrChip = () => {
   else { b.textContent = 'HDR 關'; b.classList.remove('on'); }
   $('btnShutter').classList.toggle('hdr', !!st.hdrOn);
 };
+A.refreshSrChip = () => {
+  const st = A.settings, b = $('btnSR');
+  if (st.srOn) { b.textContent = '超解析 ' + st.srCount + '張'; b.classList.add('on'); }
+  else { b.textContent = '超解析 關'; b.classList.remove('on'); }
+};
+$('btnSR').onclick = () => {
+  A.settings.srOn = !A.settings.srOn; A.saveSettings(); A.refreshSrChip();
+  if (A.settings.srOn) A.toast('超解析:數位變焦 ≥1.5× 時連拍 ' + A.settings.srCount + ' 張合成,請盡量穩穩手持', 3500);
+};
 $('btnHdr').onclick = () => { A.settings.hdrOn = !A.settings.hdrOn; A.saveSettings(); A.refreshHdrChip(); };
 
 A.refreshThumb = async () => {
@@ -96,6 +105,19 @@ async function shootHdr(opts) {
   return N.mergeHdr(Object.assign({ count: evs.length }, opts));
 }
 
+/** 多張合成超解析:連拍後在原生端對齊、合成並放大 */
+async function shootSR(opts) {
+  const N = A.needNative();
+  const n = A.settings.srCount;
+  await N.clearFrames();
+  for (let i = 0; i < n; i++) {
+    A.hudSub('連拍 ' + (i + 1) + '/' + n + '(請保持穩定)');
+    await N.cacheFrame({ index: i, data: await A.blobToBase64(await takeStill()) });
+  }
+  A.hudSub('對齊與合成中(約 10~40 秒)');
+  return N.mergeSuperRes(Object.assign({ count: n }, opts));
+}
+
 /** 以原生 Camera2 拍攝(RAW / 隱藏的望遠鏡頭)。會暫時釋放 WebView 預覽。 */
 async function shootNative(opts, rawWanted) {
   const N = A.needNative();
@@ -149,7 +171,10 @@ async function shoot() {
       }
     }
     if (!res) {
-      if (st.hdrOn) res = await shootHdr(opts);
+      if (st.srOn && opts.cropZoom >= 1.45 && !rawWanted) {
+        if (st.hdrOn) A.toast('超解析與 HDR 不能同時使用,本張以超解析為主', 3000);
+        res = await shootSR(opts);
+      } else if (st.hdrOn) res = await shootHdr(opts);
       else {
         const blob = await takeStill();
         A.hudSub('儲存中');
