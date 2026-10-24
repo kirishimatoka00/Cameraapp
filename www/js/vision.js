@@ -81,6 +81,12 @@ const grab = document.createElement('canvas');
 const gctx = grab.getContext('2d', { willReadFrequently: true });
 
 function grabFrame(width, jpeg) {
+  if (S.nativePrev) {
+    const f = A.nframe;
+    if (!f) return null;
+    if (jpeg) return f.data;
+    return f.ctx.getImageData(0, 0, f.w, f.h);
+  }
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh || video.readyState < 2) return null;
   const w = width, h = Math.round(width * vh / vw);
@@ -95,13 +101,14 @@ function grabFrame(width, jpeg) {
 async function faceTick() {
   const mode = A.settings.focusAssist;
   const want = mode === 'face' || (mode !== 'track' && A.settings.faceAuto);
-  if (!want || !S.stream || document.hidden || V.faceBusy || A.busy || S.recording) {
+  if (!want || (!S.stream && !S.nativePrev) || document.hidden || V.faceBusy || A.busy || S.recording) {
     if (!want && V.faces.length) { V.faces = []; A.redrawOverlay(); }
     return;
   }
-  const data = grabFrame(320, true);
-  if (!data) return;
   V.faceBusy = true;
+  if (S.nativePrev && !(await A.pullNativeFrame(320))) { V.faceBusy = false; return; }
+  const data = grabFrame(320, true);
+  if (!data) { V.faceBusy = false; return; }
   try {
     const res = await A.CT().detectFaces({ data, max: 10 });
     V.faces = (res && res.faces) || [];
@@ -150,7 +157,8 @@ function toGray(img) {
   return g;
 }
 
-function startTrack(u, v) {
+async function startTrack(u, v) {
+  if (S.nativePrev) await A.pullNativeFrame(TW);
   const img = grabFrame(TW, false);
   if (!img) return;
   const gray = toGray(img);
@@ -173,9 +181,16 @@ function startTrack(u, v) {
 function stopTrack() { V.track = null; A.redrawOverlay(); }
 A.stopTrack = stopTrack;
 
-function trackTick() {
+let trackBusy = false;
+async function trackTick() {
   const t = V.track;
-  if (!t || A.settings.focusAssist !== 'track' || !S.stream || document.hidden || S.recording) return;
+  if (!t || A.settings.focusAssist !== 'track' || (!S.stream && !S.nativePrev) || document.hidden || S.recording || trackBusy) return;
+  if (S.nativePrev) {
+    trackBusy = true;
+    const ok = await A.pullNativeFrame(TW);
+    trackBusy = false;
+    if (!ok) return;
+  }
   const img = grabFrame(TW, false);
   if (!img) return;
   if (img.width !== t.W || img.height !== t.H) { stopTrack(); return; }

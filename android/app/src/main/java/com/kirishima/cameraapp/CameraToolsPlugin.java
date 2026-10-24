@@ -1119,6 +1119,38 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void focusNativePreview(PluginCall call) {
+        NativePreview v = np;
+        if (v != null) v.focusAt(call.getFloat("u", 0.5f), call.getFloat("v", 0.5f));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void grabPreviewFrame(PluginCall call) {
+        final int width = call.getInt("width", 320);
+        faceExec.execute(() -> {
+            try {
+                NativePreview v = np;
+                android.graphics.Bitmap b = v == null ? null : v.grab(width);
+                if (b == null) {
+                    call.reject("沒有預覽畫面");
+                    return;
+                }
+                ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 15);
+                b.compress(Bitmap.CompressFormat.JPEG, 70, bos);
+                JSObject r = new JSObject();
+                r.put("data", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP));
+                r.put("w", b.getWidth());
+                r.put("h", b.getHeight());
+                b.recycle();
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
     public void stopNativePreview(PluginCall call) {
         vexec.execute(() -> {
             NativePreview v = np;

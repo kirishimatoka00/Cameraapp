@@ -149,6 +149,23 @@ async function stopNativePrev() {
 }
 A.stopNativePrev = stopNativePrev;
 
+/** 取得原生預覽的縮小畫面(供人臉偵測/追焦使用),結果放在 A.nframe */
+A.pullNativeFrame = async (width) => {
+  if (!S.nativePrev) return false;
+  try {
+    const r = await A.needNative().grabPreviewFrame({ width });
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/jpeg;base64,' + r.data; });
+    const c = A.nframe && A.nframe.canvas ? A.nframe.canvas : document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    A.nframe = { canvas: c, ctx, data: r.data, w: c.width, h: c.height };
+    S.nativeDims = [c.width, c.height];
+    return true;
+  } catch (e) { return false; }
+};
+
 function nativeRect() {
   const r = frame.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   return { left: Math.round(r.left * dpr), top: Math.round(r.top * dpr), w: Math.round(r.width * dpr), h: Math.round(r.height * dpr) };
@@ -303,23 +320,25 @@ A.updateGrid = () => {
 $('btnGrid').onclick = () => { A.settings.grid = !A.settings.grid; A.saveSettings(); A.updateGrid(); };
 
 /* 座標轉換:影像(0..1)↔ 取景框像素(含 object-fit: cover 與預覽縮放) */
+const vdims = () => (S.nativePrev ? (S.nativeDims || [3, 4]) : [video.videoWidth || 3, video.videoHeight || 4]);
+const flipX = () => (S.nativePrev ? !!(S.front && A.settings.selfieMirror) : !!S.front);
 A.vidToFrame = (u, v) => {
-  const vw = video.videoWidth || 3, vh = video.videoHeight || 4;
+  const [vw, vh] = vdims();
   const w = frame.clientWidth, h = frame.clientHeight;
   const sc = Math.max(w / vw, h / vh);
   const dw = vw * sc, dh = vh * sc;
   let x = (w - dw) / 2 + u * dw, y = (h - dh) / 2 + v * dh;
   x = w / 2 + (x - w / 2) * S.cssZoom;
   y = h / 2 + (y - h / 2) * S.cssZoom;
-  if (S.front) x = w - x;
+  if (flipX()) x = w - x;
   return [x, y];
 };
 A.frameToVid = (x, y) => {
-  const vw = video.videoWidth || 3, vh = video.videoHeight || 4;
+  const [vw, vh] = vdims();
   const w = frame.clientWidth, h = frame.clientHeight;
   const sc = Math.max(w / vw, h / vh);
   const dw = vw * sc, dh = vh * sc;
-  if (S.front) x = w - x;
+  if (flipX()) x = w - x;
   const px = w / 2 + (x - w / 2) / S.cssZoom, py = h / 2 + (y - h / 2) / S.cssZoom;
   return [clamp(((px - (w - dw) / 2) / dw), 0, 1), clamp(((py - (h - dh) / 2) / dh), 0, 1)];
 };
@@ -476,6 +495,7 @@ A.focusAtFrame = (x, y, silent) => {
 };
 let focusTimer;
 A.focusAtVid = async (u, v) => {
+  if (S.nativePrev) { A.needNative().focusNativePreview({ u, v }).catch(() => {}); return; }
   if (!S.track || S.focusManual) return;
   try { await S.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: u, y: v }] }] }); } catch (e) { /* ignore */ }
   try { await S.track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); } catch (e) { /* ignore */ }

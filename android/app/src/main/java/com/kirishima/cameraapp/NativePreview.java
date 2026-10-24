@@ -49,6 +49,9 @@ final class NativePreview {
     private Rect active;
     private float zoom = 1f;
     private boolean torch;
+    private Rect cropRect;
+    private float coverSx = 1f, coverSy = 1f;
+    private volatile float cAspect = 4f / 3f;   // 直立內容的 高/寬
     private volatile Throwable error;
     String info = "";
 
@@ -203,9 +206,12 @@ final class NativePreview {
         float cw = prev.getHeight(), ch = prev.getWidth();
         if (displayRotation() % 180 != 0) { cw = prev.getWidth(); ch = prev.getHeight(); }
         float ca = cw / ch, va = viewW / viewH;
+        cAspect = ch / cw;
         float sx = 1f, sy = 1f;
         if (va > ca) sy = va / ca; else sx = ca / va;
         Matrix m = new Matrix();
+        coverSx = sx;
+        coverSy = sy;
         m.postScale(sx, sy, viewW / 2f, viewH / 2f);
         if (mirror) m.postScale(-1f, 1f, viewW / 2f, viewH / 2f);
         tv.setTransform(m);
@@ -217,10 +223,11 @@ final class NativePreview {
         if (z > 1.01f) {
             int cw = Math.round(active.width() / z), ch = Math.round(active.height() / z);
             int cx = active.centerX(), cy = active.centerY();
-            builder.set(CaptureRequest.SCALER_CROP_REGION, new Rect(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2));
+            cropRect = new Rect(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2);
         } else {
-            builder.set(CaptureRequest.SCALER_CROP_REGION, active);
+            cropRect = new Rect(active);
         }
+        builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect);
     }
 
     void setZoom(float z) {
@@ -231,6 +238,70 @@ final class NativePreview {
             session.setRepeatingRequest(builder.build(), null, h);
         } catch (Throwable ignored) {
         }
+    }
+
+
+    /** 以預覽內容(直立、0..1)座標對焦並測光。 */
+    void focusAt(float u, float v) {
+        if (builder == null || session == null || cc == null || active == null) return;
+        try {
+            Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            Integer lf = cc.get(CameraCharacteristics.LENS_FACING);
+            int sensor = so == null ? 90 : so;
+            boolean front = lf != null && lf == CameraCharacteristics.LENS_FACING_FRONT;
+            int rot = front ? (sensor + displayRotation()) % 360 : (sensor - displayRotation() + 360) % 360;
+            float sx, sy;
+            if (rot == 90) { sx = v; sy = 1f - u; }
+            else if (rot == 180) { sx = 1f - u; sy = 1f - v; }
+            else if (rot == 270) { sx = 1f - v; sy = u; }
+            else { sx = u; sy = v; }
+            Rect c = cropRect != null ? cropRect : active;
+            int px = c.left + Math.round(sx * c.width()), py = c.top + Math.round(sy * c.height());
+            int half = Math.max(16, active.width() / 14);
+            Rect r = new Rect(Math.max(active.left, px - half), Math.max(active.top, py - half),
+                    Math.min(active.right - 1, px + half), Math.min(active.bottom - 1, py + half));
+            android.hardware.camera2.params.MeteringRectangle[] regs = {
+                    new android.hardware.camera2.params.MeteringRectangle(r, 1000)};
+            Integer maxAf = cc.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF);
+            Integer maxAe = cc.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
+            if (maxAf != null && maxAf > 0) builder.set(CaptureRequest.CONTROL_AF_REGIONS, regs);
+            if (maxAe != null && maxAe > 0) builder.set(CaptureRequest.CONTROL_AE_REGIONS, regs);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
+            session.capture(builder.build(), null, h);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
+            session.setRepeatingRequest(builder.build(), null, h);
+            h.removeCallbacksAndMessages("release");
+            h.postAtTime(() -> {
+                try {
+                    if (builder == null || session == null) return;
+                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, null);
+                    builder.set(CaptureRequest.CONTROL_AE_REGIONS, null);
+                    builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
+                    session.capture(builder.build(), null, h);
+                    builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
+                    session.setRepeatingRequest(builder.build(), null, h);
+                } catch (Throwable ignored) {
+                }
+            }, "release", android.os.SystemClock.uptimeMillis() + 3000);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 擷取目前預覽畫面(直立,寬度縮到 width),回傳 JPEG;失敗回傳 null。 */
+    android.graphics.Bitmap grab(int width) {
+        final TextureView t = tv;
+        if (t == null) return null;
+        final android.graphics.Bitmap[] out = new android.graphics.Bitmap[1];
+        final CountDownLatch l = new CountDownLatch(1);
+        act.runOnUiThread(() -> {
+            try {
+                out[0] = t.getBitmap(width, Math.round(width * cAspect));
+            } catch (Throwable ignored) {
+            }
+            l.countDown();
+        });
+        try { l.await(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+        return out[0];
     }
 
     void stop() {
