@@ -98,6 +98,16 @@ final class NativeShot {
                 cc = null;
                 res.notes.append("讀不到鏡頭 ").append(req.cameraId).append(" 的規格,改用預設尺寸;");
             }
+            if (cc != null) {
+                float[] fl = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                res.notes.append("使用原生#").append(req.cameraId);
+                if (fl != null && fl.length > 0) res.notes.append(" 焦距").append(String.format(java.util.Locale.US, "%.1f", fl[0])).append("mm");
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    java.util.Set<String> ph = cc.getPhysicalCameraIds();
+                    if (ph != null && !ph.isEmpty()) res.notes.append(" 實體").append(ph);
+                }
+                res.notes.append(";");
+            }
 
             Size jpegSize = new Size(4000, 3000), rawSize = null, prevSize = new Size(640, 480);
             boolean rawOk = false;
