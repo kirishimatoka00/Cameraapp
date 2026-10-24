@@ -1,0 +1,1029 @@
+package com.kirishima.cameraapp;
+
+import android.content.ContentResolver;
+import android.content.ContentUris;
+import android.content.ContentValues;
+import android.content.Context;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.BitmapRegionDecoder;
+import android.graphics.Canvas;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CameraMetadata;
+import android.media.ExifInterface;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.ParcelFileDescriptor;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.util.Range;
+import android.util.SizeF;
+
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * 原生輔助外掛:
+ * - 列出實體鏡頭與等效焦段(用來辨識 Note 10+ 的 2x 望遠)
+ * - 存圖到 MediaStore(Pictures/AICamera)
+ * - 多張曝光 HDR 合成(分條帶處理,記憶體友善)
+ * - 分級放大到 1 億畫素
+ * - 區域解碼(給檢視器看 1 億畫素的原生細節)
+ * - 呼叫 Gemini 圖像模型做數位變焦回推(最高 4K)
+ */
+@CapacitorPlugin(name = "CameraTools")
+public class CameraToolsPlugin extends Plugin {
+
+    private static final String ALBUM = "AICamera";
+    private static final String GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+    private final ExecutorService exec = Executors.newSingleThreadExecutor();
+
+    // ------------------------------------------------------------------ 共用工具
+
+    private ContentResolver resolver() {
+        return getContext().getContentResolver();
+    }
+
+    private static String msg(Throwable t) {
+        if (t instanceof OutOfMemoryError) return "記憶體不足,請降低目標畫素後再試";
+        String m = t.getMessage();
+        return (m == null || m.isEmpty()) ? t.getClass().getSimpleName() : m;
+    }
+
+    private void progress(String stage) {
+        JSObject o = new JSObject();
+        o.put("stage", stage);
+        notifyListeners("progress", o);
+    }
+
+    private static String stamp() {
+        return new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date())
+                + "_" + (System.currentTimeMillis() % 1000);
+    }
+
+    private Uri createPending(String name) throws IOException {
+        ContentValues v = new ContentValues();
+        v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        v.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + ALBUM);
+        v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri uri = resolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+        if (uri == null) throw new IOException("無法在相簿建立檔案");
+        return uri;
+    }
+
+    private void publish(Uri uri) {
+        ContentValues v = new ContentValues();
+        v.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        resolver().update(uri, v, null, null);
+    }
+
+    private void discard(Uri uri) {
+        try {
+            resolver().delete(uri, null, null);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private Uri writeBytes(String prefix, byte[] bytes) throws IOException {
+        Uri uri = createPending(prefix + "_" + stamp() + ".jpg");
+        try (OutputStream os = resolver().openOutputStream(uri)) {
+            if (os == null) throw new IOException("無法寫入相簿");
+            os.write(bytes);
+        } catch (IOException | RuntimeException e) {
+            discard(uri);
+            throw e;
+        }
+        publish(uri);
+        return uri;
+    }
+
+    private Uri writeBitmap(String prefix, Bitmap bmp, int quality) throws IOException {
+        Uri uri = createPending(prefix + "_" + stamp() + ".jpg");
+        try (OutputStream os = resolver().openOutputStream(uri)) {
+            if (os == null) throw new IOException("無法寫入相簿");
+            if (!bmp.compress(Bitmap.CompressFormat.JPEG, quality, os)) {
+                throw new IOException("JPEG 編碼失敗");
+            }
+        } catch (IOException | RuntimeException e) {
+            discard(uri);
+            throw e;
+        }
+        publish(uri);
+        return uri;
+    }
+
+    private JSObject describe(Uri uri) throws IOException {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        try (InputStream is = resolver().openInputStream(uri)) {
+            BitmapFactory.decodeStream(is, null, o);
+        }
+        JSObject r = new JSObject();
+        r.put("uri", uri.toString());
+        r.put("width", o.outWidth);
+        r.put("height", o.outHeight);
+        r.put("megapixels", o.outWidth * (double) o.outHeight / 1e6);
+        return r;
+    }
+
+    private static byte[] toJpeg(Bitmap bmp, int quality) {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 20);
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, bos);
+        return bos.toByteArray();
+    }
+
+    // ------------------------------------------------------------------ EXIF / 幾何
+
+    private static Matrix orientationMatrix(int orientation) {
+        Matrix m = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                m.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                m.postRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                m.postScale(1, -1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                m.postRotate(90);
+                m.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                m.postRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                m.postRotate(-90);
+                m.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                m.postRotate(-90);
+                break;
+            default:
+                return null;
+        }
+        return m;
+    }
+
+    private static int orientationOf(InputStream is) {
+        try {
+            ExifInterface ex = new ExifInterface(is);
+            return ex.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+        } catch (Throwable t) {
+            return ExifInterface.ORIENTATION_NORMAL;
+        }
+    }
+
+    private static Bitmap applyOrientation(Bitmap src, int orientation) {
+        Matrix m = orientationMatrix(orientation);
+        if (m == null) return src;
+        Bitmap r = Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), m, true);
+        if (r != src) src.recycle();
+        return r;
+    }
+
+    private static Bitmap centerCrop(Bitmap src, double zoom) {
+        if (zoom <= 1.01) return src;
+        int w = src.getWidth(), h = src.getHeight();
+        int cw = Math.max(16, (int) Math.round(w / zoom));
+        int ch = Math.max(16, (int) Math.round(h / zoom));
+        int x = (w - cw) / 2, y = (h - ch) / 2;
+        Bitmap r = Bitmap.createBitmap(src, x, y, cw, ch);
+        if (r != src) src.recycle();
+        return r;
+    }
+
+    /** 載入並轉正;maxDim<=0 代表不限制尺寸。 */
+    private Bitmap loadUpright(Uri uri, int maxDim) throws IOException {
+        BitmapFactory.Options b = new BitmapFactory.Options();
+        b.inJustDecodeBounds = true;
+        try (InputStream is = resolver().openInputStream(uri)) {
+            BitmapFactory.decodeStream(is, null, b);
+        }
+        if (b.outWidth <= 0) throw new IOException("無法讀取影像");
+        int sample = 1;
+        if (maxDim > 0) {
+            while (Math.max(b.outWidth, b.outHeight) / (sample * 2) >= maxDim) sample *= 2;
+        }
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inSampleSize = sample;
+        o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        Bitmap bmp;
+        try (InputStream is = resolver().openInputStream(uri)) {
+            bmp = BitmapFactory.decodeStream(is, null, o);
+        }
+        if (bmp == null) throw new IOException("影像解碼失敗");
+        int orientation;
+        try (InputStream is = resolver().openInputStream(uri)) {
+            orientation = orientationOf(is);
+        }
+        bmp = applyOrientation(bmp, orientation);
+        if (maxDim > 0) {
+            int longEdge = Math.max(bmp.getWidth(), bmp.getHeight());
+            if (longEdge > maxDim) {
+                float s = maxDim / (float) longEdge;
+                Bitmap scaled = Bitmap.createScaledBitmap(bmp,
+                        Math.max(1, Math.round(bmp.getWidth() * s)),
+                        Math.max(1, Math.round(bmp.getHeight() * s)), true);
+                if (scaled != bmp) bmp.recycle();
+                bmp = scaled;
+            }
+        }
+        return bmp;
+    }
+
+    private static byte[] normalizeJpeg(byte[] bytes, double cropZoom, int quality) {
+        int orientation = orientationOf(new ByteArrayInputStream(bytes));
+        if (orientation == ExifInterface.ORIENTATION_NORMAL && cropZoom <= 1.01) return bytes;
+        Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        if (bmp == null) return bytes;
+        bmp = applyOrientation(bmp, orientation);
+        bmp = centerCrop(bmp, cropZoom);
+        byte[] out = toJpeg(bmp, quality);
+        bmp.recycle();
+        return out;
+    }
+
+    // ------------------------------------------------------------------ 鏡頭資訊
+
+    @PluginMethod
+    public void getCameras(PluginCall call) {
+        try {
+            CameraManager cm = (CameraManager) getContext().getSystemService(Context.CAMERA_SERVICE);
+            JSArray arr = new JSArray();
+            for (String id : cm.getCameraIdList()) {
+                CameraCharacteristics cc = cm.getCameraCharacteristics(id);
+                JSObject o = new JSObject();
+                o.put("id", id);
+
+                Integer facing = cc.get(CameraCharacteristics.LENS_FACING);
+                String f = "unknown";
+                if (facing != null) {
+                    if (facing == CameraCharacteristics.LENS_FACING_BACK) f = "back";
+                    else if (facing == CameraCharacteristics.LENS_FACING_FRONT) f = "front";
+                    else f = "external";
+                }
+                o.put("facing", f);
+
+                float[] fl = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                SizeF ss = cc.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+                if (fl != null && fl.length > 0 && ss != null) {
+                    double diag = Math.hypot(ss.getWidth(), ss.getHeight());
+                    o.put("focalMm", fl[0]);
+                    o.put("equivMm", fl[0] * 43.2666 / diag);
+                }
+
+                Rect pa = cc.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+                if (pa != null) o.put("sensorMp", pa.width() * (double) pa.height() / 1e6);
+
+                boolean usable = false;
+                int[] caps = cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+                if (caps != null) {
+                    for (int c : caps) {
+                        if (c == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) {
+                            usable = true;
+                            break;
+                        }
+                    }
+                }
+                o.put("usable", usable);
+
+                JSArray phys = new JSArray();
+                if (Build.VERSION.SDK_INT >= 28) {
+                    for (String p : cc.getPhysicalCameraIds()) phys.put(p);
+                }
+                o.put("physicalIds", phys);
+
+                if (Build.VERSION.SDK_INT >= 30) {
+                    Range<Float> zr = cc.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+                    if (zr != null) {
+                        o.put("zoomMin", zr.getLower());
+                        o.put("zoomMax", zr.getUpper());
+                    }
+                }
+                arr.put(o);
+            }
+            JSObject res = new JSObject();
+            res.put("cameras", arr);
+            call.resolve(res);
+        } catch (Throwable t) {
+            call.reject(msg(t));
+        }
+    }
+
+    // ------------------------------------------------------------------ 存圖 / 讀圖
+
+    @PluginMethod
+    public void saveImage(PluginCall call) {
+        final String data = call.getString("data");
+        if (data == null || data.isEmpty()) {
+            call.reject("缺少影像資料");
+            return;
+        }
+        Double cz = call.getDouble("cropZoom", 1.0);
+        Integer q = call.getInt("quality", 95);
+        final double cropZoom = cz == null ? 1.0 : cz;
+        final int quality = q == null ? 95 : q;
+        final String prefix = call.getString("prefix", "IMG");
+        exec.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                byte[] out = normalizeJpeg(bytes, cropZoom, quality);
+                Uri uri = writeBytes(prefix, out);
+                call.resolve(describe(uri));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void readImage(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        Integer md = call.getInt("maxDim", 2048);
+        Integer q = call.getInt("quality", 88);
+        final int maxDim = md == null ? 2048 : md;
+        final int quality = q == null ? 88 : q;
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                Uri uri = Uri.parse(uriStr);
+                JSObject info = describe(uri);
+                Bitmap bmp = loadUpright(uri, maxDim);
+                JSObject r = new JSObject();
+                r.put("data", Base64.encodeToString(toJpeg(bmp, quality), Base64.NO_WRAP));
+                r.put("width", info.getInteger("width"));
+                r.put("height", info.getInteger("height"));
+                r.put("megapixels", info.getDouble("megapixels"));
+                r.put("outWidth", bmp.getWidth());
+                r.put("outHeight", bmp.getHeight());
+                bmp.recycle();
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    /** 以正規化座標(0..1)讀取原圖區域,解析度不超過 outMax。 */
+    @PluginMethod
+    public void readRegion(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        final double x0 = call.getDouble("x0", 0.0);
+        final double y0 = call.getDouble("y0", 0.0);
+        final double x1 = call.getDouble("x1", 1.0);
+        final double y1 = call.getDouble("y1", 1.0);
+        Integer om = call.getInt("outMax", 1600);
+        final int outMax = om == null ? 1600 : om;
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            ParcelFileDescriptor pfd = null;
+            BitmapRegionDecoder dec = null;
+            try {
+                Uri uri = Uri.parse(uriStr);
+                pfd = resolver().openFileDescriptor(uri, "r");
+                if (pfd == null) throw new IOException("無法開啟檔案");
+                dec = BitmapRegionDecoder.newInstance(pfd.getFileDescriptor(), false);
+                int W = dec.getWidth(), H = dec.getHeight();
+                int left = (int) Math.max(0, Math.min(W - 2, Math.floor(x0 * W)));
+                int top = (int) Math.max(0, Math.min(H - 2, Math.floor(y0 * H)));
+                int right = (int) Math.max(left + 2, Math.min(W, Math.ceil(x1 * W)));
+                int bottom = (int) Math.max(top + 2, Math.min(H, Math.ceil(y1 * H)));
+                Rect r = new Rect(left, top, right, bottom);
+                int sample = 1;
+                while (Math.max(r.width(), r.height()) / (sample * 2) >= outMax) sample *= 2;
+                BitmapFactory.Options o = new BitmapFactory.Options();
+                o.inSampleSize = sample;
+                o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                Bitmap bmp = dec.decodeRegion(r, o);
+                if (bmp == null) throw new IOException("區域解碼失敗");
+                JSObject res = new JSObject();
+                res.put("data", Base64.encodeToString(toJpeg(bmp, 88), Base64.NO_WRAP));
+                res.put("x0", r.left / (double) W);
+                res.put("y0", r.top / (double) H);
+                res.put("x1", r.right / (double) W);
+                res.put("y1", r.bottom / (double) H);
+                bmp.recycle();
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            } finally {
+                if (dec != null) dec.recycle();
+                try {
+                    if (pfd != null) pfd.close();
+                } catch (IOException ignored) {
+                }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void listRecent(PluginCall call) {
+        Integer lim = call.getInt("limit", 60);
+        final int limit = lim == null ? 60 : lim;
+        exec.execute(() -> {
+            try {
+                Bundle args = new Bundle();
+                args.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,
+                        MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?");
+                args.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                        new String[]{Environment.DIRECTORY_PICTURES + "/" + ALBUM + "%"});
+                args.putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                        MediaStore.MediaColumns.DATE_ADDED + " DESC, " + MediaStore.MediaColumns._ID + " DESC");
+                args.putInt(ContentResolver.QUERY_ARG_LIMIT, limit);
+                String[] proj = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+                        MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT};
+                JSArray arr = new JSArray();
+                try (Cursor c = resolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj, args, null)) {
+                    if (c != null) {
+                        while (c.moveToNext()) {
+                            long id = c.getLong(0);
+                            JSObject o = new JSObject();
+                            o.put("uri", ContentUris.withAppendedId(
+                                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString());
+                            o.put("name", c.getString(1));
+                            o.put("width", c.getInt(2));
+                            o.put("height", c.getInt(3));
+                            arr.put(o);
+                        }
+                    }
+                }
+                JSObject res = new JSObject();
+                res.put("items", arr);
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ 放大到 N 百萬畫素
+
+    @PluginMethod
+    public void upscale(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        Double tm = call.getDouble("targetMegapixels", 100.0);
+        Integer q = call.getInt("quality", 92);
+        final double targetMp = tm == null ? 100.0 : tm;
+        final int quality = q == null ? 92 : q;
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        exec.execute(() -> {
+            Bitmap src = null;
+            Bitmap dst = null;
+            try {
+                Uri uri = Uri.parse(uriStr);
+                progress("讀取原圖");
+                src = loadUpright(uri, 0);
+                double srcMp = src.getWidth() * (double) src.getHeight() / 1e6;
+                if (srcMp >= targetMp * 0.98) {
+                    throw new IOException("原圖已達 " + String.format(Locale.US, "%.1f", srcMp) + " MP,無需放大");
+                }
+                double[] tries = {targetMp, 75, 50, 36};
+                double usedMp = 0;
+                int W = 0, H = 0;
+                for (double mp : tries) {
+                    if (mp > targetMp) continue;
+                    if (mp <= srcMp) break;
+                    double s = Math.sqrt(mp * 1e6 / (src.getWidth() * (double) src.getHeight()));
+                    W = (int) Math.round(src.getWidth() * s);
+                    H = (int) Math.round(src.getHeight() * s);
+                    progress("配置 " + String.format(Locale.US, "%.0f", mp) + " MP 畫布");
+                    try {
+                        dst = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+                        usedMp = mp;
+                        break;
+                    } catch (OutOfMemoryError oom) {
+                        dst = null;
+                        System.gc();
+                    }
+                }
+                if (dst == null) throw new IOException("記憶體不足,無法配置放大畫布");
+
+                progress("放大中(" + W + "×" + H + ")");
+                Canvas canvas = new Canvas(dst);
+                Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+                canvas.drawBitmap(src, null, new Rect(0, 0, W, H), paint);
+                src.recycle();
+                src = null;
+
+                progress("編碼 JPEG(大型影像需要一些時間)");
+                Uri out = writeBitmap("UP" + String.format(Locale.US, "%.0f", usedMp) + "MP", dst, quality);
+                JSObject res = describe(out);
+                res.put("requestedMp", targetMp);
+                res.put("actualMp", usedMp);
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            } finally {
+                if (src != null) src.recycle();
+                if (dst != null) dst.recycle();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ HDR
+
+    @PluginMethod
+    public void cacheFrame(PluginCall call) {
+        final String data = call.getString("data");
+        Integer idx = call.getInt("index", 0);
+        final int index = idx == null ? 0 : idx;
+        if (data == null) {
+            call.reject("缺少影像資料");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                File f = new File(getContext().getCacheDir(), "hdr_" + index + ".jpg");
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write(bytes);
+                }
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void clearFrames(PluginCall call) {
+        exec.execute(() -> {
+            File[] fs = getContext().getCacheDir().listFiles();
+            if (fs != null) {
+                for (File f : fs) {
+                    if (f.getName().startsWith("hdr_")) //noinspection ResultOfMethodCallIgnored
+                        f.delete();
+                }
+            }
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void mergeHdr(PluginCall call) {
+        Integer c = call.getInt("count", 3);
+        Integer q = call.getInt("quality", 95);
+        Double cz = call.getDouble("cropZoom", 1.0);
+        final int count = c == null ? 3 : c;
+        final int quality = q == null ? 95 : q;
+        final double cropZoom = cz == null ? 1.0 : cz;
+        exec.execute(() -> {
+            try {
+                Uri uri = fuseFrames(count, quality, cropZoom);
+                call.resolve(describe(uri));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    private static float[] wellTable() {
+        float[] t = new float[256];
+        for (int i = 0; i < 256; i++) {
+            double d = i / 255.0 - 0.5;
+            t[i] = (float) Math.exp(-(d * d) / 0.08);
+        }
+        return t;
+    }
+
+    private static void boxBlurH(float[] src, float[] dst, int W, int rows, int R, double[] pre) {
+        for (int y = 0; y < rows; y++) {
+            int base = y * W;
+            pre[0] = 0;
+            for (int x = 0; x < W; x++) pre[x + 1] = pre[x] + src[base + x];
+            for (int x = 0; x < W; x++) {
+                int lo = Math.max(0, x - R);
+                int hi = Math.min(W, x + R + 1);
+                dst[base + x] = (float) ((pre[hi] - pre[lo]) / (hi - lo));
+            }
+        }
+    }
+
+    private static void boxBlurV(float[] src, float[] dst, int W, int rows, int R, float[] col) {
+        java.util.Arrays.fill(col, 0, W, 0f);
+        int curLo = 0, curHi = -1;
+        for (int y = 0; y < rows; y++) {
+            int newHi = Math.min(rows - 1, y + R);
+            while (curHi < newHi) {
+                curHi++;
+                int b = curHi * W;
+                for (int x = 0; x < W; x++) col[x] += src[b + x];
+            }
+            int newLo = Math.max(0, y - R);
+            while (curLo < newLo) {
+                int b = curLo * W;
+                for (int x = 0; x < W; x++) col[x] -= src[b + x];
+                curLo++;
+            }
+            float inv = 1f / (curHi - curLo + 1);
+            int b = y * W;
+            for (int x = 0; x < W; x++) dst[b + x] = col[x] * inv;
+        }
+    }
+
+    /** 曝光融合(Mertens 概念:對比 × 飽和度 × 曝光良好度),分條帶處理避免吃光記憶體。 */
+    private Uri fuseFrames(int n, int quality, double cropZoom) throws Exception {
+        File dir = getContext().getCacheDir();
+        File[] files = new File[n];
+        BitmapRegionDecoder[] dec = new BitmapRegionDecoder[n];
+        Bitmap out = null;
+        try {
+            int W = -1, H = -1;
+            for (int i = 0; i < n; i++) {
+                files[i] = new File(dir, "hdr_" + i + ".jpg");
+                if (!files[i].exists()) throw new IOException("缺少 HDR 影格 " + i);
+                dec[i] = BitmapRegionDecoder.newInstance(files[i].getAbsolutePath(), false);
+                if (i == 0) {
+                    W = dec[0].getWidth();
+                    H = dec[0].getHeight();
+                } else if (dec[i].getWidth() != W || dec[i].getHeight() != H) {
+                    throw new IOException("HDR 影格尺寸不一致,請重拍");
+                }
+            }
+            int orientation = ExifInterface.ORIENTATION_NORMAL;
+            try (InputStream is = new java.io.FileInputStream(files[0])) {
+                orientation = orientationOf(is);
+            }
+
+            out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+            final int R = Math.max(3, W / 700);
+            final int pad = R + 1;
+            final int stripRows = 160;
+            final int maxRows = stripRows + 2 * pad;
+
+            int[][] px = new int[n][maxRows * W];
+            float[][] lum = new float[n][maxRows * W];
+            float[][] wgt = new float[n][maxRows * W];
+            float[] tmp = new float[maxRows * W];
+            double[] pre = new double[W + 1];
+            float[] col = new float[W];
+            int[] line = new int[W * stripRows];
+            float[] well = wellTable();
+
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+
+            for (int y0 = 0; y0 < H; y0 += stripRows) {
+                int y1 = Math.min(H, y0 + stripRows);
+                int py0 = Math.max(0, y0 - pad);
+                int py1 = Math.min(H, y1 + pad);
+                int rows = py1 - py0;
+                int total = rows * W;
+                progress("HDR 合成 " + (int) (100.0 * y0 / H) + "%");
+
+                for (int i = 0; i < n; i++) {
+                    Bitmap b = dec[i].decodeRegion(new Rect(0, py0, W, py1), opts);
+                    if (b == null) throw new IOException("HDR 影格解碼失敗");
+                    b.getPixels(px[i], 0, W, 0, 0, W, rows);
+                    b.recycle();
+
+                    int[] P = px[i];
+                    float[] L = lum[i];
+                    float[] Wt = wgt[i];
+                    for (int p = 0; p < total; p++) {
+                        int cpx = P[p];
+                        int r = (cpx >> 16) & 255, g = (cpx >> 8) & 255, bl = cpx & 255;
+                        float rf = r / 255f, gf = g / 255f, bf = bl / 255f;
+                        L[p] = 0.299f * rf + 0.587f * gf + 0.114f * bf;
+                        float mean = (rf + gf + bf) / 3f;
+                        float sat = (float) Math.sqrt(((rf - mean) * (rf - mean) + (gf - mean) * (gf - mean)
+                                + (bf - mean) * (bf - mean)) / 3f);
+                        Wt[p] = (sat + 0.05f) * well[r] * well[g] * well[bl];
+                    }
+                    for (int y = 0; y < rows; y++) {
+                        int rowBase = y * W;
+                        int upBase = (y > 0 ? y - 1 : y) * W;
+                        int dnBase = (y < rows - 1 ? y + 1 : y) * W;
+                        for (int x = 0; x < W; x++) {
+                            int p = rowBase + x;
+                            float l = L[p];
+                            float ctr = Math.abs(L[upBase + x] + L[dnBase + x]
+                                    + L[rowBase + (x > 0 ? x - 1 : x)]
+                                    + L[rowBase + (x < W - 1 ? x + 1 : x)] - 4f * l);
+                            Wt[p] *= (ctr + 0.01f);
+                        }
+                    }
+                    boxBlurH(Wt, tmp, W, rows, R, pre);
+                    boxBlurV(tmp, Wt, W, rows, R, col);
+                }
+
+                int coreStart = y0 - py0;
+                int coreRows = y1 - y0;
+                for (int yy = 0; yy < coreRows; yy++) {
+                    int rowBase = (coreStart + yy) * W;
+                    int lineBase = yy * W;
+                    for (int x = 0; x < W; x++) {
+                        int p = rowBase + x;
+                        float sum = 0, ar = 0, ag = 0, ab = 0;
+                        for (int i = 0; i < n; i++) {
+                            float w = wgt[i][p] + 1e-12f;
+                            int cpx = px[i][p];
+                            ar += w * ((cpx >> 16) & 255);
+                            ag += w * ((cpx >> 8) & 255);
+                            ab += w * (cpx & 255);
+                            sum += w;
+                        }
+                        int r = Math.min(255, Math.round(ar / sum));
+                        int g = Math.min(255, Math.round(ag / sum));
+                        int b = Math.min(255, Math.round(ab / sum));
+                        line[lineBase + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    }
+                }
+                out.setPixels(line, 0, W, 0, y0, W, coreRows);
+            }
+
+            progress("套用方向與裁切");
+            Bitmap fin = applyOrientation(out, orientation);
+            out = null;
+            fin = centerCrop(fin, cropZoom);
+            progress("編碼 JPEG");
+            try {
+                return writeBitmap("HDR", fin, quality);
+            } finally {
+                fin.recycle();
+            }
+        } finally {
+            for (BitmapRegionDecoder d : dec) if (d != null) d.recycle();
+            if (out != null) out.recycle();
+        }
+    }
+
+    // ------------------------------------------------------------------ Gemini
+
+    private static final String[] RATIOS = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"};
+
+    private static String nearestRatio(int w, int h) {
+        double target = w / (double) h;
+        String best = "1:1";
+        double bestDiff = 1e9;
+        for (String r : RATIOS) {
+            String[] p = r.split(":");
+            double v = Double.parseDouble(p[0]) / Double.parseDouble(p[1]);
+            double d = Math.abs(Math.log(v / target));
+            if (d < bestDiff) {
+                bestDiff = d;
+                best = r;
+            }
+        }
+        return best;
+    }
+
+    private static class Http {
+        int code;
+        String body;
+    }
+
+    private static Http request(String method, String url, String key, String json) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod(method);
+        c.setConnectTimeout(30000);
+        c.setReadTimeout(300000);
+        c.setRequestProperty("x-goog-api-key", key);
+        if (json != null) {
+            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setDoOutput(true);
+            c.setFixedLengthStreamingMode(bytes.length);
+            try (OutputStream os = c.getOutputStream()) {
+                os.write(bytes);
+            }
+        }
+        Http r = new Http();
+        r.code = c.getResponseCode();
+        InputStream is = r.code >= 400 ? c.getErrorStream() : c.getInputStream();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 16);
+        if (is != null) {
+            byte[] buf = new byte[32768];
+            int n;
+            while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+            is.close();
+        }
+        r.body = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+        c.disconnect();
+        return r;
+    }
+
+    private static String apiError(Http h) {
+        try {
+            JSONObject j = new JSONObject(h.body);
+            JSONObject e = j.optJSONObject("error");
+            if (e != null) {
+                String m = e.optString("message", "");
+                if (!m.isEmpty()) return "HTTP " + h.code + ":" + m;
+            }
+        } catch (Throwable ignored) {
+        }
+        String b = h.body == null ? "" : h.body;
+        if (b.length() > 300) b = b.substring(0, 300);
+        return "HTTP " + h.code + " " + b;
+    }
+
+    /** 回傳最後一個含影像資料的區塊 {mime, base64};找不到回傳 null。 */
+    private static String[] findImage(Object node) {
+        String[] best = null;
+        if (node instanceof JSONObject) {
+            JSONObject o = (JSONObject) node;
+            Object dv = o.opt("data");
+            if (dv instanceof String && ((String) dv).length() > 2000) {
+                String type = o.optString("type", "");
+                String mime = o.optString("mime_type", o.optString("mimeType", "image/jpeg"));
+                if ("image".equals(type) || mime.startsWith("image/")) {
+                    best = new String[]{mime, (String) dv};
+                }
+            }
+            Iterator<String> it = o.keys();
+            while (it.hasNext()) {
+                String[] r = findImage(o.opt(it.next()));
+                if (r != null) best = r;
+            }
+        } else if (node instanceof JSONArray) {
+            JSONArray a = (JSONArray) node;
+            for (int i = 0; i < a.length(); i++) {
+                String[] r = findImage(a.opt(i));
+                if (r != null) best = r;
+            }
+        }
+        return best;
+    }
+
+    @PluginMethod
+    public void testGemini(PluginCall call) {
+        final String key = call.getString("apiKey", "");
+        final String model = call.getString("model", "");
+        if (key == null || key.trim().isEmpty()) {
+            call.reject("尚未輸入 API key");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                Http h = request("GET", GEMINI_BASE + "/models?pageSize=1", key.trim(), null);
+                JSObject res = new JSObject();
+                if (h.code != 200) {
+                    res.put("ok", false);
+                    res.put("message", "金鑰驗證失敗 " + apiError(h));
+                    call.resolve(res);
+                    return;
+                }
+                String note = "金鑰有效";
+                if (model != null && !model.isEmpty()) {
+                    Http m = request("GET", GEMINI_BASE + "/models/" + model, key.trim(), null);
+                    if (m.code == 200) note += ",模型 " + model + " 可用";
+                    else if (m.code == 404)
+                        note += ",但模型目錄查無「" + model + "」(若為新模型,仍可能可透過 Interactions API 使用)";
+                    else note += ",模型查詢回應 " + m.code;
+                }
+                res.put("ok", true);
+                res.put("message", note);
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void geminiRestore(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        final String key = call.getString("apiKey", "");
+        final String model = call.getString("model", "gemini-nano-banana-2.1");
+        final String imageSize = call.getString("imageSize", "4K");
+        final String prompt = call.getString("prompt", "");
+        Integer md = call.getInt("maxInputDim", 2048);
+        Integer q = call.getInt("quality", 95);
+        final int maxInput = md == null ? 2048 : md;
+        final int quality = q == null ? 95 : q;
+        if (uriStr == null) {
+            call.reject("缺少 uri");
+            return;
+        }
+        if (key == null || key.trim().isEmpty()) {
+            call.reject("尚未設定 Gemini API key");
+            return;
+        }
+        exec.execute(() -> {
+            try {
+                Uri uri = Uri.parse(uriStr);
+                progress("準備送出影像");
+                Bitmap in = loadUpright(uri, maxInput);
+                String ratio = nearestRatio(in.getWidth(), in.getHeight());
+                String b64 = Base64.encodeToString(toJpeg(in, 92), Base64.NO_WRAP);
+                in.recycle();
+
+                // 方案 A:Interactions API
+                String errA;
+                String[] img = null;
+                {
+                    JSONObject body = new JSONObject();
+                    body.put("model", model);
+                    JSONArray input = new JSONArray();
+                    input.put(new JSONObject().put("type", "text").put("text", prompt));
+                    input.put(new JSONObject().put("type", "image").put("mime_type", "image/jpeg").put("data", b64));
+                    body.put("input", input);
+                    body.put("response_format", new JSONObject()
+                            .put("type", "image")
+                            .put("mime_type", "image/jpeg")
+                            .put("aspect_ratio", ratio)
+                            .put("image_size", imageSize));
+                    body.put("store", false);
+                    progress("Gemini 回推中(" + model + " / " + imageSize + ")");
+                    Http h = request("POST", GEMINI_BASE + "/interactions", key.trim(), body.toString());
+                    if (h.code == 200) {
+                        img = findImage(new JSONObject(h.body));
+                        errA = img == null ? "回應中沒有影像" : null;
+                    } else {
+                        errA = apiError(h);
+                    }
+                }
+
+                // 方案 B:generateContent
+                String errB = null;
+                if (img == null) {
+                    JSONObject body = new JSONObject();
+                    JSONArray parts = new JSONArray();
+                    parts.put(new JSONObject().put("text", prompt));
+                    parts.put(new JSONObject().put("inlineData",
+                            new JSONObject().put("mimeType", "image/jpeg").put("data", b64)));
+                    body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
+                    body.put("generationConfig", new JSONObject()
+                            .put("responseModalities", new JSONArray().put("IMAGE"))
+                            .put("imageConfig", new JSONObject()
+                                    .put("aspectRatio", ratio)
+                                    .put("imageSize", imageSize)));
+                    progress("改用 generateContent 再試一次");
+                    Http h = request("POST", GEMINI_BASE + "/models/" + model + ":generateContent",
+                            key.trim(), body.toString());
+                    if (h.code == 200) {
+                        img = findImage(new JSONObject(h.body));
+                        if (img == null) errB = "回應中沒有影像(可能被安全機制擋下)";
+                    } else {
+                        errB = apiError(h);
+                    }
+                }
+                if (img == null) {
+                    throw new IOException("Gemini 回推失敗。Interactions:" + errA + (errB == null ? "" : ";generateContent:" + errB));
+                }
+
+                progress("儲存結果");
+                byte[] raw = Base64.decode(img[1], Base64.DEFAULT);
+                Uri out;
+                if (img[0].contains("jpeg") || img[0].contains("jpg")) {
+                    out = writeBytes("AI" + imageSize, raw);
+                } else {
+                    Bitmap bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                    if (bmp == null) throw new IOException("無法解碼 Gemini 回傳影像");
+                    out = writeBitmap("AI" + imageSize, bmp, quality);
+                    bmp.recycle();
+                }
+                JSObject res = describe(out);
+                res.put("model", model);
+                call.resolve(res);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+}

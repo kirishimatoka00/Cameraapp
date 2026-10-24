@@ -1,0 +1,8 @@
+{
+  "appId": "com.kirishima.cameraapp",
+  "appName": "AI Camera Pro",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
