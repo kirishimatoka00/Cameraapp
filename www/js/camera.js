@@ -497,6 +497,11 @@ async function setExposureAuto() {
   }
 }
 
+function focusDiopters(c) {
+  const near = Math.max(c.min || 0.05, 0.05);
+  const far = Math.max(c.max || 10, near * 2);
+  return [1 / near, 1 / far];   // [近端, 遠端]
+}
 async function applyManualFocus(dist) {
   if (!S.track) return;
   S.focusManual = true; S.focusDist = dist;
@@ -567,11 +572,16 @@ const PARAMS = {
     cap: () => S.caps.focusDistance,
     toSlider: () => {
       const c = S.caps.focusDistance;
-      return S.focusDist == null ? 0 : 100 * (S.focusDist - c.min) / (c.max - c.min);
+      if (S.focusDist == null) return 0;
+      const [dn, df] = focusDiopters(c);
+      return 100 * (1 / Math.max(S.focusDist, 0.01) - dn) / (df - dn);
     },
     apply: async (s) => {
       const c = S.caps.focusDistance;
-      const d = c.min + (c.max - c.min) * s / 100;
+      // 以屈光度(1/距離)為刻度:近處與遠處的調整手感一致,不再「前端一碰就失焦、後段沒變化」
+      const [dn, df] = focusDiopters(c);
+      const dio = dn + (df - dn) * s / 100;
+      const d = A.clamp(1 / Math.max(dio, 0.001), c.min, c.max);
       await applyManualFocus(d);
       return d.toFixed(2) + 'm';
     },
@@ -590,6 +600,7 @@ function selectParam(name) {
   row.hidden = false;
   $('paramLabel').textContent = p.label;
   const r = $('paramRange');
+  r.step = name === 'focus' ? '0.1' : '0.5';
   r.value = p.toSlider();
   $('paramVal').textContent = p.text();
   $('paramAuto').classList.toggle('on', p.isAuto());
