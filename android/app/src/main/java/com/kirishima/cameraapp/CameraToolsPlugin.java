@@ -235,6 +235,19 @@ public class CameraToolsPlugin extends Plugin {
         return r;
     }
 
+    /** 以逐級 2× 放大 + 雙線性,避免一次大倍率放大的方塊感。 */
+    private static Bitmap resizeSmooth(Bitmap src, int tw, int th) {
+        Bitmap cur = src;
+        while (cur.getWidth() * 2 < tw && cur.getHeight() * 2 < th) {
+            Bitmap n = Bitmap.createScaledBitmap(cur, cur.getWidth() * 2, cur.getHeight() * 2, true);
+            if (n != cur) cur.recycle();
+            cur = n;
+        }
+        Bitmap r = Bitmap.createScaledBitmap(cur, tw, th, true);
+        if (r != cur) cur.recycle();
+        return r;
+    }
+
     private static Bitmap centerCrop(Bitmap src, double zoom) {
         if (zoom <= 1.01) return src;
         int w = src.getWidth(), h = src.getHeight();
@@ -461,11 +474,17 @@ public class CameraToolsPlugin extends Plugin {
 
     /** 裁切 → 變焦裁切 → (保留原始)→ 色彩調整 → 存檔。回傳含 uri / originalUri。 */
     private volatile boolean mirrorFlag;
+    private volatile boolean keepSizeFlag;
 
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
         bmp = centerCropAspect(bmp, aspect);
+        final int fullW = bmp.getWidth(), fullH = bmp.getHeight();
         bmp = centerCrop(bmp, zoom);
+        if (keepSizeFlag && zoom > 1.01 && (bmp.getWidth() < fullW || bmp.getHeight() < fullH)) {
+            progress("放大回原尺寸");
+            bmp = resizeSmooth(bmp, fullW, fullH);
+        }
         if (mirrorFlag) {
             Matrix mm = new Matrix();
             mm.postScale(-1f, 1f);
@@ -513,6 +532,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
+                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -612,6 +632,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
+                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -1422,6 +1443,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirrorHdr;
+                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1443,6 +1465,7 @@ public class CameraToolsPlugin extends Plugin {
         exec.execute(() -> {
             try {
                 mirrorFlag = mirror;
+                keepSizeFlag = Boolean.TRUE.equals(call.getBoolean("keepSize", false));
                 call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));

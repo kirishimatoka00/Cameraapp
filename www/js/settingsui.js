@@ -73,6 +73,7 @@ function sync() {
   $('setKeep').checked = st.keepOriginal;
   $('setRawJpeg').checked = st.rawJpeg;
   $('setMirror').checked = st.selfieMirror;
+  $('setKeepSize').checked = !!st.keepSize;
   $('setTeleId').value = st.teleNativeId || '';
   $('setQuality').value = st.jpegQuality;
   $('qVal').textContent = st.jpegQuality;
@@ -143,6 +144,7 @@ A.bindSettings = () => {
 
   $('setApply').onchange = (e) => { st.applyOnCapture = e.target.checked; A.saveSettings(); };
   $('setKeep').onchange = (e) => { st.keepOriginal = e.target.checked; A.saveSettings(); };
+  $('setKeepSize').onchange = (e) => { st.keepSize = e.target.checked; A.saveSettings(); };
   $('setMirror').onchange = (e) => { st.selfieMirror = e.target.checked; A.saveSettings(); };
   $('setRawJpeg').onchange = (e) => { st.rawJpeg = e.target.checked; A.saveSettings(); };
   $('setTeleId').onchange = async (e) => {
