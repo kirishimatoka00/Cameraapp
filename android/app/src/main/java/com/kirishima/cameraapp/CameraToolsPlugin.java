@@ -1056,6 +1056,80 @@ public class CameraToolsPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ 原生 Camera2 錄影
+
+    private NativeVideo nv;
+
+    @PluginMethod
+    public void startNativeVideo(PluginCall call) {
+        final NativeVideo.Cfg c = new NativeVideo.Cfg();
+        c.cameraId = call.getString("cameraId", "0");
+        c.width = call.getInt("width", 1920);
+        c.height = call.getInt("height", 1080);
+        c.fps = call.getInt("fps", 30);
+        c.bitrate = call.getInt("bitrate", 20000000);
+        c.audio = Boolean.TRUE.equals(call.getBoolean("audio", true));
+        c.mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
+        c.left = call.getInt("left", 0);
+        c.top = call.getInt("top", 0);
+        c.w = call.getInt("w", 0);
+        c.h = call.getInt("h", 0);
+        final double zoom = call.getDouble("zoom", 1.0);
+        vexec.execute(() -> {
+            try {
+                if (nv != null) { nv.abort(); nv = null; }
+                NativeVideo v = new NativeVideo(getActivity(), c);
+                nv = v;
+                v.setZoom((float) zoom);
+                v.start(getBridge().getWebView());
+                JSObject r = new JSObject();
+                r.put("width", v.actualW);
+                r.put("height", v.actualH);
+                r.put("fps", v.actualFps);
+                r.put("audio", v.hasAudio);
+                r.put("note", v.note);
+                call.resolve(r);
+            } catch (Throwable t) {
+                nv = null;
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void setVideoZoom(PluginCall call) {
+        NativeVideo v = nv;
+        if (v != null) v.setZoom(call.getFloat("zoom", 1f));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopNativeVideo(PluginCall call) {
+        vexec.execute(() -> {
+            NativeVideo v = nv;
+            nv = null;
+            try {
+                if (v == null) throw new IOException("沒有進行中的錄影");
+                android.net.Uri u = v.stop();
+                JSObject r = new JSObject();
+                r.put("uri", String.valueOf(u));
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            }
+        });
+    }
+
+    @PluginMethod
+    public void abortNativeVideo(PluginCall call) {
+        vexec.execute(() -> {
+            NativeVideo v = nv;
+            nv = null;
+            if (v != null) v.abort();
+            call.resolve();
+        });
+    }
+
     // ------------------------------------------------------------------ 影片(分段寫入,避免整支影片進記憶體)
 
     private OutputStream vOut;

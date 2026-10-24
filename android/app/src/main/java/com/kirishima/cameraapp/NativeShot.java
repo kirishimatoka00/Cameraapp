@@ -175,10 +175,13 @@ final class NativeShot {
             outer:
             for (int fmtPass = 0; fmtPass < 2; fmtPass++) {
                 boolean yuv = fmtPass == 1;
+                int passTries = 0;
                 for (Size js : jpegCands) {
                     for (Size ps : prevCands) {
                         for (int rawMode = (wantRaw && !yuv ? 1 : 0); rawMode >= 0; rawMode--) {
-                            if (attempts >= 16 || System.currentTimeMillis() - t0 > 30_000L) break outer;
+                            if (System.currentTimeMillis() - t0 > 40_000L) break outer;
+                            if (passTries >= 8) continue;
+                            passTries++;
                             attempts++;
                             tried.append(yuv ? "Y:" : "").append(ps.getWidth()).append('x').append(ps.getHeight()).append('+')
                                     .append(js.getWidth()).append('x').append(js.getHeight()).append(rawMode == 1 ? "+RAW " : " ");

@@ -277,7 +277,10 @@ A.applyPreviewZoom = () => {
   S.within = Math.max(1, S.Z / ratio);              // 相對「拍攝鏡頭」的數位倍率(裁切用)
   const prevWithin = Math.max(1, S.Z / base);
   let css = prevWithin;
-  if (S.mode === 'video' && S.caps.zoom && S.track) {
+  if (S.recording && A.nativeVideoZoom) {
+    A.nativeVideoZoom();
+    css = 1;
+  } else if (S.mode === 'video' && S.caps.zoom && S.track) {
     // 影片:用硬體變焦,錄下來的畫面才會跟著放大
     const z = clamp(prevWithin, S.caps.zoom.min, S.caps.zoom.max);
     S.track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});

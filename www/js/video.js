@@ -58,14 +58,9 @@ document.querySelectorAll('#segFps button').forEach((b) => {
   b.onclick = () => { if (S.recording) return; A.settings.videoFps = parseInt(b.dataset.v, 10); A.saveSettings(); optChanged(); };
 });
 
-/* ------------------------------------------------------------------ 錄製 */
+/* ------------------------------------------------------------------ 錄製(原生 Camera2 + 硬體編碼) */
 
-let rec = null, queue = Promise.resolve(), t0 = 0, timer = null, writeErr = null;
-
-function pickMime() {
-  const c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  return c.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
-}
+let t0 = 0, timer = null, nativeRec = false;
 
 function tick() {
   const s = Math.floor((performance.now() - t0) / 1000);
@@ -73,65 +68,80 @@ function tick() {
   $('recBadge').textContent = '● REC ' + mm + ':' + ss;
 }
 
+A.nativeVideoZoom = () => {
+  if (!nativeRec) return;
+  const L = S.lens[S.lensKey];
+  const base = L && L.base ? L.base : (L ? L.ratio : 1);
+  const z = Math.max(1, S.Z / base);
+  A.needNative().setVideoZoom({ zoom: z }).catch(() => {});
+};
+
 async function start() {
-  if (!window.MediaRecorder) { A.toast('此裝置的 WebView 不支援錄影'); return; }
-  if (!S.stream) return;
-  const mime = pickMime();
-  if (!mime) { A.toast('找不到可用的影片編碼'); return; }
-  const st = A.settings, r = RES[st.videoRes] || RES['4K'];
   const N = A.needNative();
-  writeErr = null; queue = Promise.resolve();
-  await N.beginVideo({ mime });
-  let mr;
+  const L = S.lens[S.lensKey];
+  if (!L) return;
+  const st = A.settings, r = RES[st.videoRes] || RES['4K'];
+  const rect = $('frame').getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const base = L.base ? L.base : L.ratio;
+  A.busy = true;
+  A.hud('準備錄影', '切換為原生錄影…');
+  // WebView 必須先釋放鏡頭,Camera2 才能獨占
+  A.stopStream();
+  await new Promise((res) => setTimeout(res, 250));
+  document.body.classList.add('native-rec');
+  let info;
   try {
-    mr = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: r.bps * (st.videoFps >= 60 ? 1.5 : 1), audioBitsPerSecond: 128000 });
-  } catch (e) {
-    try { mr = new MediaRecorder(S.stream, { mimeType: mime }); }
-    catch (e2) { await N.abortVideo(); throw e2; }
-  }
-  mr.ondataavailable = (ev) => {
-    if (!ev.data || !ev.data.size) return;
-    queue = queue.then(async () => {
-      if (writeErr) return;
-      try { await N.appendVideo({ data: await A.blobToBase64(ev.data) }); } catch (e) { writeErr = e; }
+    info = await N.startNativeVideo({
+      cameraId: String(L.dev.id),
+      width: r.w, height: r.h, fps: st.videoFps,
+      bitrate: Math.round(r.bps * (st.videoFps >= 60 ? 1.5 : 1)),
+      audio: true,
+      mirror: !!(S.front && st.selfieMirror),
+      left: Math.round(rect.left * dpr), top: Math.round(rect.top * dpr),
+      w: Math.round(rect.width * dpr), h: Math.round(rect.height * dpr),
+      zoom: Math.max(1, S.Z / base),
     });
-  };
-  rec = mr;
-  mr.start(2000);
+  } catch (e) {
+    document.body.classList.remove('native-rec');
+    A.busy = false; A.hudHide();
+    try { await A.restartLens(); } catch (e2) { /* ignore */ }
+    throw e;
+  }
+  nativeRec = true;
   S.recording = true;
+  A.busy = false;
+  A.hudHide();
+  const got = info.width + '×' + info.height + ' @' + info.fps + 'fps' + (info.audio ? '' : '(無聲)');
+  A.toast('原生錄影 ' + got + (info.note ? ' — ' + info.note : ''), info.note ? 6000 : 2500);
   t0 = performance.now();
   $('recBadge').hidden = false;
   tick();
-  timer = setInterval(() => {
-    tick();
-    if (writeErr) { A.toast('寫入失敗,停止錄影:' + A.errMsg(writeErr), 5000); stop(); }
-  }, 500);
+  timer = setInterval(tick, 500);
   $('btnShutter').classList.add('rec');
   if (navigator.vibrate) navigator.vibrate(20);
 }
 
 async function stop() {
-  if (!rec) return;
-  const mr = rec; rec = null;
+  if (!nativeRec) return;
+  nativeRec = false;
   clearInterval(timer);
   $('btnShutter').classList.remove('rec');
   $('recBadge').hidden = true;
   A.busy = true;
   A.hud('儲存影片', '請稍候…');
   try {
-    await new Promise((res) => { mr.onstop = res; try { mr.stop(); } catch (e) { res(); } });
-    await queue;
-    const N = A.needNative();
-    if (writeErr) { await N.abortVideo(); throw writeErr; }
-    await N.finishVideo();
+    await A.needNative().stopNativeVideo();
     A.toast('影片已儲存到 Movies/AICamera', 3500);
     A.refreshThumb();
   } catch (e) {
     A.toast('影片儲存失敗:' + A.errMsg(e), 6000);
   } finally {
     S.recording = false;
+    document.body.classList.remove('native-rec');
     A.busy = false;
     A.hudHide();
+    try { await A.restartLens(); A.applyPreviewZoom(); } catch (e) { A.toast('預覽恢復失敗:' + A.errMsg(e), 4000); }
   }
 }
 
@@ -140,7 +150,7 @@ A.toggleRecord = async () => {
   try {
     if (S.recording) await stop(); else await start();
   } catch (e) {
-    S.recording = false;
+    S.recording = false; nativeRec = false;
     $('btnShutter').classList.remove('rec');
     $('recBadge').hidden = true;
     A.toast('錄影失敗:' + A.errMsg(e), 6000);
