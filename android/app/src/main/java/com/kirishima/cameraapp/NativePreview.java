@@ -266,6 +266,10 @@ final class NativePreview {
             Integer maxAe = cc.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
             if (maxAf != null && maxAf > 0) builder.set(CaptureRequest.CONTROL_AF_REGIONS, regs);
             if (maxAe != null && maxAe > 0) builder.set(CaptureRequest.CONTROL_AE_REGIONS, regs);
+            // 連續對焦模式下 TRIGGER_START 只會「鎖定現況」,不會重新掃描;改用 AUTO 才會真的對焦
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
+            session.capture(builder.build(), null, h);
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
             session.capture(builder.build(), null, h);
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
@@ -276,13 +280,14 @@ final class NativePreview {
                     if (builder == null || session == null) return;
                     builder.set(CaptureRequest.CONTROL_AF_REGIONS, null);
                     builder.set(CaptureRequest.CONTROL_AE_REGIONS, null);
+                    builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                     builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
                     session.capture(builder.build(), null, h);
                     builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
                     session.setRepeatingRequest(builder.build(), null, h);
                 } catch (Throwable ignored) {
                 }
-            }, "release", android.os.SystemClock.uptimeMillis() + 3000);
+            }, "release", android.os.SystemClock.uptimeMillis() + 5000);
         } catch (Throwable ignored) {
         }
     }

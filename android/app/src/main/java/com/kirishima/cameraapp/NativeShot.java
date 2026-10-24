@@ -18,6 +18,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.graphics.Rect;
 import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
@@ -45,6 +46,8 @@ final class NativeShot {
         float ev;                 // 自動曝光時的曝光補償
         int jpegQuality = 95;
         boolean torch;
+        float zoom = 1f;          // 數位變焦倍率:以感測器裁切區域(ISP 放大)實現
+        float focusU = -1f, focusV = -1f;   // 對焦點(直立畫面 0..1),<0 = 畫面中央
     }
 
     static final class Result {
@@ -52,6 +55,7 @@ final class NativeShot {
         int jpegOrientationDeg;
         boolean yuv;                // 靜態影像來自 YUV 轉成的 JPEG(沒有 EXIF 方向)
         int width, height;
+        float appliedZoom = 1f;     // 已在感測器端套用的變焦倍率
         StringBuilder notes = new StringBuilder();
     }
 
@@ -238,6 +242,43 @@ final class NativeShot {
                 res.notes.append("自動曝光/對焦未完全收斂,仍已拍攝;");
             }
             check();
+            // 真正的對焦掃描(連續對焦的「已對焦」常常只是被動狀態,拍出來會偏軟)
+            boolean afLocked = false;
+            if (!manualFocus && cc != null) {
+                Integer maxAf = cc.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF);
+                final CountDownLatch afDone = new CountDownLatch(1);
+                final boolean[] triggered = {false};
+                CaptureRequest.Builder ab = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                ab.addTarget(previewSurface);
+                applyCommon(ab, manualExp, false);
+                ab.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
+                if (maxAf != null && maxAf > 0) {
+                    android.hardware.camera2.params.MeteringRectangle mr = focusRegion();
+                    if (mr != null) ab.set(CaptureRequest.CONTROL_AF_REGIONS, new android.hardware.camera2.params.MeteringRectangle[]{mr});
+                }
+                CaptureRequest.Builder at = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                at.addTarget(previewSurface);
+                applyCommon(at, manualExp, false);
+                at.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
+                if (maxAf != null && maxAf > 0 && ab.get(CaptureRequest.CONTROL_AF_REGIONS) != null)
+                    at.set(CaptureRequest.CONTROL_AF_REGIONS, ab.get(CaptureRequest.CONTROL_AF_REGIONS));
+                at.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
+                session.stopRepeating();
+                session.setRepeatingRequest(ab.build(), new CameraCaptureSession.CaptureCallback() {
+                    @Override public void onCaptureCompleted(CameraCaptureSession s2, CaptureRequest r2, TotalCaptureResult tr) {
+                        if (!triggered[0]) return;
+                        Integer af = tr.get(CaptureResult.CONTROL_AF_STATE);
+                        if (af != null && (af == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+                                || af == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED)) afDone.countDown();
+                    }
+                }, h);
+                Thread.sleep(150);
+                triggered[0] = true;
+                session.capture(at.build(), null, h);
+                afLocked = afDone.await(3, TimeUnit.SECONDS);
+                if (!afLocked) res.notes.append("對焦掃描逾時,以目前焦點拍攝;");
+            }
+            check();
             try { session.stopRepeating(); } catch (Throwable ignored) { }
 
             // 靜態拍攝
@@ -245,12 +286,13 @@ final class NativeShot {
             if (jpegReader != null) sb.addTarget(jpegReader.getSurface());
             if (useRaw) sb.addTarget(rawReader.getSurface());
             applyCommon(sb, manualExp, manualFocus);
+            applyQuality(sb);
             sb.set(CaptureRequest.CONTROL_AF_MODE, manualFocus ? CameraMetadata.CONTROL_AF_MODE_OFF
-                    : CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                    : (afLocked || cc != null ? CameraMetadata.CONTROL_AF_MODE_AUTO : CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE));
             int orient = jpegOrientation();
             res.jpegOrientationDeg = orient;
             sb.set(CaptureRequest.JPEG_ORIENTATION, orient);
-            sb.set(CaptureRequest.JPEG_QUALITY, (byte) req.jpegQuality);
+            sb.set(CaptureRequest.JPEG_QUALITY, (byte) Math.max(95, req.jpegQuality));
             session.capture(sb.build(), new CameraCaptureSession.CaptureCallback() {
                 @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult tr) {
                     stillResult = tr;
@@ -443,6 +485,73 @@ final class NativeShot {
             b.set(CaptureRequest.LENS_FOCUS_DISTANCE, diopter);
         }
         if (req.torch) b.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
+        applyZoomCrop(b);
+    }
+
+    private void applyZoomCrop(CaptureRequest.Builder b) {
+        if (cc == null || req.zoom <= 1.01f) return;
+        Rect active = cc.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+        if (active == null) return;
+        Float mz = cc.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+        float z = Math.min(req.zoom, mz == null ? 1f : mz);
+        if (z <= 1.01f) return;
+        int cw = Math.round(active.width() / z), ch = Math.round(active.height() / z);
+        int cx = active.centerX(), cy = active.centerY();
+        b.set(CaptureRequest.SCALER_CROP_REGION, new Rect(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2));
+        res.appliedZoom = z;
+    }
+
+    private static boolean has(int[] arr, int v) {
+        if (arr == null) return false;
+        for (int x : arr) if (x == v) return true;
+        return false;
+    }
+
+    /** 靜態拍攝的畫質模式:高品質降噪/銳化/去壞點/色差,並開啟光學防震。 */
+    private void applyQuality(CaptureRequest.Builder b) {
+        if (cc == null) return;
+        if (has(cc.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES), CameraMetadata.EDGE_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY);
+        if (has(cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES), CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY);
+        if (has(cc.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES), CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.HOT_PIXEL_MODE, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY);
+        if (has(cc.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES), CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY))
+            b.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY);
+        if (has(cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION), CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON))
+            b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON);
+        b.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_STILL_CAPTURE);
+    }
+
+    /** 直立畫面座標 → 目前裁切區域內的感測器像素 */
+    private android.hardware.camera2.params.MeteringRectangle focusRegion() {
+        Rect active = cc == null ? null : cc.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+        if (active == null) return null;
+        float u = req.focusU >= 0 ? req.focusU : 0.5f, v = req.focusV >= 0 ? req.focusV : 0.5f;
+        Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);
+        Integer lf = cc.get(CameraCharacteristics.LENS_FACING);
+        int sensor = so == null ? 90 : so;
+        boolean front = lf != null && lf == CameraCharacteristics.LENS_FACING_FRONT;
+        int disp = 0;
+        try {
+            WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+            int r = wm.getDefaultDisplay().getRotation();
+            disp = r == Surface.ROTATION_90 ? 90 : r == Surface.ROTATION_180 ? 180 : r == Surface.ROTATION_270 ? 270 : 0;
+        } catch (Throwable ignored) {
+        }
+        int rot = front ? (sensor + disp) % 360 : (sensor - disp + 360) % 360;
+        float sx, sy;
+        if (rot == 90) { sx = v; sy = 1f - u; }
+        else if (rot == 180) { sx = 1f - u; sy = 1f - v; }
+        else if (rot == 270) { sx = 1f - v; sy = u; }
+        else { sx = u; sy = v; }
+        float z = Math.max(1f, res.appliedZoom);
+        float cw = active.width() / z, ch = active.height() / z;
+        int px = Math.round(active.centerX() - cw / 2f + sx * cw), py = Math.round(active.centerY() - ch / 2f + sy * ch);
+        int half = Math.max(16, active.width() / 14);
+        Rect r = new Rect(Math.max(active.left, px - half), Math.max(active.top, py - half),
+                Math.min(active.right - 1, px + half), Math.min(active.bottom - 1, py + half));
+        return new android.hardware.camera2.params.MeteringRectangle(r, 1000);
     }
 
     private int jpegOrientation() {

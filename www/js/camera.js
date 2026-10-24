@@ -194,6 +194,7 @@ A.startLens = async (key) => {
   const L = S.lens[key];
   if (!L) return false;
   if (S.nativePrev) await stopNativePrev();
+  if (S.lensKey !== key) S.lastFocus = null;
   stopStream();
   if (L.nativeId && S.mode !== 'video' && A.settings.nativePreview !== false && !A.forceWeb) {
     S.lensKey = key;
@@ -495,7 +496,7 @@ A.focusAtFrame = (x, y, silent) => {
 };
 let focusTimer;
 A.focusAtVid = async (u, v) => {
-  if (S.nativePrev) { A.needNative().focusNativePreview({ u, v }).catch(() => {}); return; }
+  if (S.nativePrev) { S.lastFocus = { u, v }; A.needNative().focusNativePreview({ u, v }).catch(() => {}); return; }
   if (!S.track || S.focusManual) return;
   try { await S.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: u, y: v }] }] }); } catch (e) { /* ignore */ }
   try { await S.track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); } catch (e) { /* ignore */ }

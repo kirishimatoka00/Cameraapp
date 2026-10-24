@@ -136,6 +136,9 @@ async function shootNative(opts, rawWanted) {
     focusMeters: S.mode === 'manual' && S.focusManual && S.focusDist ? S.focusDist : 0,
     ev: man ? 0 : S.ev,
     torch: S.lightMode === 'torch',
+    zoom: S.within > 1.01 ? S.within : 1,
+    focusU: S.lastFocus ? S.lastFocus.u : -1,
+    focusV: S.lastFocus ? S.lastFocus.v : -1,
   });
   A.stopStream();
   await A.stopNativePrev();

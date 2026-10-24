@@ -621,6 +621,11 @@ public class CameraToolsPlugin extends Plugin {
         Integer q = call.getInt("quality", 95);
         r.jpegQuality = q == null ? 95 : q;
         r.torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
+        Double zz = call.getDouble("zoom", 1.0);
+        r.zoom = zz == null ? 1f : zz.floatValue();
+        Double fu = call.getDouble("focusU", -1.0), fv = call.getDouble("focusV", -1.0);
+        r.focusU = fu == null ? -1f : fu.floatValue();
+        r.focusV = fv == null ? -1f : fv.floatValue();
         Double cz = call.getDouble("cropZoom", 1.0);
         Double ca = call.getDouble("cropAspect", 0.0);
         final double cropZoom = cz == null ? 1.0 : cz;
@@ -652,7 +657,8 @@ public class CameraToolsPlugin extends Plugin {
                     Bitmap bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
                     if (bmp == null) throw new IOException("JPEG 解碼失敗");
                     bmp = applyOrientation(bmp, orientation);
-                    res = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, cropZoom, params, keepOriginal);
+                    double residual = s.appliedZoom > 1.01f ? Math.max(1.0, r.zoom / s.appliedZoom) : cropZoom;
+                    res = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, residual, params, keepOriginal);
                 } else {
                     res = new JSObject();
                 }
