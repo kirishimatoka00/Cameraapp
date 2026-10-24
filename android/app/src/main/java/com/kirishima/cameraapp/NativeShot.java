@@ -69,13 +69,12 @@ final class NativeShot {
 
     private volatile Throwable error;
     private final CountDownLatch opened = new CountDownLatch(1);
-    private final CountDownLatch configured = new CountDownLatch(1);
     private final CountDownLatch ready = new CountDownLatch(1);
     private volatile int framesSeen;
     private volatile TotalCaptureResult stillResult;
     private final CountDownLatch gotResult = new CountDownLatch(1);
-    private final CountDownLatch gotJpeg = new CountDownLatch(1);
-    private final CountDownLatch gotRaw = new CountDownLatch(1);
+    private volatile CountDownLatch gotJpeg = new CountDownLatch(1);
+    private volatile CountDownLatch gotRaw = new CountDownLatch(1);
     private Image rawImage;
 
     private NativeShot(Context c, Req r) {
@@ -119,69 +118,68 @@ final class NativeShot {
             final boolean wantRaw = req.raw && rawOk;
             final boolean wantJpeg = req.jpeg || !wantRaw;
 
-            List<Surface> outs = new ArrayList<>();
-            st = new SurfaceTexture(false);
-            st.setDefaultBufferSize(prevSize.getWidth(), prevSize.getHeight());
-            previewSurface = new Surface(st);
-            outs.add(previewSurface);
-            if (wantJpeg) {
-                jpegReader = ImageReader.newInstance(jpegSize.getWidth(), jpegSize.getHeight(), ImageFormat.JPEG, 2);
-                jpegReader.setOnImageAvailableListener(rd -> {
-                    try (Image im = rd.acquireNextImage()) {
-                        if (im != null && res.jpeg == null) {
-                            ByteBuffer b = im.getPlanes()[0].getBuffer();
-                            byte[] a = new byte[b.remaining()];
-                            b.get(a);
-                            res.jpeg = a;
-                            res.width = im.getWidth();
-                            res.height = im.getHeight();
-                            gotJpeg.countDown();
+            // 依序嘗試不同的輸出尺寸組合(隱藏鏡頭常不接受最大尺寸)
+            List<Size> jpegCands = new ArrayList<>();
+            List<Size> prevCands = new ArrayList<>();
+            if (cc != null) {
+                StreamConfigurationMap map2 = cc.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                if (map2 != null) {
+                    Size[] js = map2.getOutputSizes(ImageFormat.JPEG);
+                    if (js != null) {
+                        List<Size> sorted = new ArrayList<>(java.util.Arrays.asList(js));
+                        java.util.Collections.sort(sorted, (x, y) -> Long.compare((long) y.getWidth() * y.getHeight(), (long) x.getWidth() * x.getHeight()));
+                        jpegCands.add(sorted.get(0));
+                        for (Size z : sorted) {
+                            long px = (long) z.getWidth() * z.getHeight();
+                            if (jpegCands.size() < 4 && px <= 12_500_000L && !jpegCands.contains(z)
+                                    && Math.abs(z.getWidth() / (double) z.getHeight() - 4.0 / 3.0) < 0.02) jpegCands.add(z);
                         }
-                    } catch (Throwable t) {
-                        error = t;
-                        gotJpeg.countDown();
-                    }
-                }, h);
-                outs.add(jpegReader.getSurface());
-            } else {
-                gotJpeg.countDown();
-            }
-            if (wantRaw) {
-                rawReader = ImageReader.newInstance(rawSize.getWidth(), rawSize.getHeight(), ImageFormat.RAW_SENSOR, 2);
-                rawReader.setOnImageAvailableListener(rd -> {
-                    try {
-                        Image im = rd.acquireNextImage();
-                        if (im != null) {
-                            if (rawImage == null) {
-                                rawImage = im;
-                                gotRaw.countDown();
-                            } else {
-                                im.close();
-                            }
+                        for (Size z : sorted) {
+                            long px = (long) z.getWidth() * z.getHeight();
+                            if (px <= 2_200_000L && !jpegCands.contains(z)) { jpegCands.add(z); break; }
                         }
-                    } catch (Throwable t) {
-                        error = t;
-                        gotRaw.countDown();
                     }
-                }, h);
-                outs.add(rawReader.getSurface());
-            } else {
-                gotRaw.countDown();
+                    Size[] ps = map2.getOutputSizes(SurfaceTexture.class);
+                    if (ps != null && ps.length > 0) {
+                        prevCands.add(pickPreview(ps));
+                        Size small = ps[ps.length - 1];
+                        for (Size z : ps) if ((long) z.getWidth() * z.getHeight() < (long) small.getWidth() * small.getHeight()) small = z;
+                        if (!prevCands.contains(small)) prevCands.add(small);
+                    }
+                }
             }
+            if (jpegCands.isEmpty()) jpegCands.add(jpegSize);
+            if (prevCands.isEmpty()) prevCands.add(prevSize);
 
             cm.openCamera(req.cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice c) { cam = c; opened.countDown(); }
-                @Override public void onDisconnected(CameraDevice c) { error = new IOException("鏡頭中斷連線"); c.close(); opened.countDown(); configured.countDown(); ready.countDown(); }
-                @Override public void onError(CameraDevice c, int e) { error = new IOException("無法開啟鏡頭 " + req.cameraId + "(錯誤碼 " + e + ")"); c.close(); opened.countDown(); configured.countDown(); ready.countDown(); }
+                @Override public void onDisconnected(CameraDevice c) { error = new IOException("鏡頭中斷連線"); c.close(); opened.countDown(); }
+                @Override public void onError(CameraDevice c, int e) { error = new IOException("無法開啟鏡頭 " + req.cameraId + "(錯誤碼 " + e + ")"); c.close(); opened.countDown(); }
             }, h);
             if (!opened.await(6, TimeUnit.SECONDS)) throw new IOException("開啟鏡頭逾時");
             check();
 
-            cam.createCaptureSession(outs, new CameraCaptureSession.StateCallback() {
-                @Override public void onConfigured(CameraCaptureSession s) { session = s; configured.countDown(); }
-                @Override public void onConfigureFailed(CameraCaptureSession s) { error = new IOException("此鏡頭不支援所要求的輸出組合"); configured.countDown(); }
-            }, h);
-            if (!configured.await(6, TimeUnit.SECONDS)) throw new IOException("建立拍攝串流逾時");
+            boolean ok = false;
+            StringBuilder tried = new StringBuilder();
+            outer:
+            for (Size js : jpegCands) {
+                for (Size ps : prevCands) {
+                    for (int rawMode = (wantRaw ? 1 : 0); rawMode >= 0; rawMode--) {
+                        tried.append(ps.getWidth()).append('x').append(ps.getHeight()).append('+')
+                                .append(js.getWidth()).append('x').append(js.getHeight()).append(rawMode == 1 ? "+RAW " : " ");
+                        if (configure(ps, js, rawSize, wantJpeg || rawMode == 0, rawMode == 1)) {
+                            ok = true;
+                            if (wantRaw && rawMode == 0) res.notes.append("此鏡頭無法同時輸出 RAW,只存 JPEG;");
+                            break outer;
+                        }
+                    }
+                }
+            }
+            if (!ok) {
+                Integer lvl = cc == null ? null : cc.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+                throw new IOException("此鏡頭不接受任何輸出組合(硬體等級 " + lvl + ",已試 " + tried.toString().trim() + ")");
+            }
+            final boolean useRaw = rawActive;
             check();
 
             // 預覽(讓 AE / AF 收斂)
@@ -214,8 +212,8 @@ final class NativeShot {
 
             // 靜態拍攝
             CaptureRequest.Builder sb = cam.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
-            if (wantJpeg) sb.addTarget(jpegReader.getSurface());
-            if (wantRaw) sb.addTarget(rawReader.getSurface());
+            if (jpegReader != null) sb.addTarget(jpegReader.getSurface());
+            if (useRaw) sb.addTarget(rawReader.getSurface());
             applyCommon(sb, manualExp, manualFocus);
             sb.set(CaptureRequest.CONTROL_AF_MODE, manualFocus ? CameraMetadata.CONTROL_AF_MODE_OFF
                     : CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
@@ -241,14 +239,14 @@ final class NativeShot {
             if (!gotRaw.await(8, TimeUnit.SECONDS)) throw new IOException("等待 RAW 逾時");
             check();
 
-            if (wantRaw && rawImage != null && cc != null && stillResult != null) {
+            if (useRaw && rawImage != null && cc != null && stillResult != null) {
                 DngCreator dng = new DngCreator(cc, stillResult);
                 dng.setOrientation(exifOrientation(orient));
                 ByteArrayOutputStream bos = new ByteArrayOutputStream(rawSize.getWidth() * rawSize.getHeight() * 2 + (1 << 20));
                 dng.writeImage(bos, rawImage);
                 dng.close();
                 res.dng = bos.toByteArray();
-                if (!wantJpeg) {
+                if (res.jpeg == null) {
                     res.width = rawSize.getWidth();
                     res.height = rawSize.getHeight();
                 }
@@ -262,6 +260,86 @@ final class NativeShot {
         } finally {
             cleanup();
         }
+    }
+
+
+    private volatile boolean rawActive;
+
+    /** 建立 ImageReader + 擷取串流;成功回傳 true。失敗時會清掉這次建立的資源。 */
+    private boolean configure(Size prev, Size jpegSz, Size rawSz, boolean wantJpeg, boolean useRaw) throws InterruptedException {
+        releaseOutputs();
+        gotJpeg = new CountDownLatch(wantJpeg ? 1 : 0);
+        gotRaw = new CountDownLatch(useRaw ? 1 : 0);
+        rawActive = useRaw;
+        List<Surface> outs = new ArrayList<>();
+        st = new SurfaceTexture(false);
+        st.setDefaultBufferSize(prev.getWidth(), prev.getHeight());
+        previewSurface = new Surface(st);
+        outs.add(previewSurface);
+        if (wantJpeg) {
+            jpegReader = ImageReader.newInstance(jpegSz.getWidth(), jpegSz.getHeight(), ImageFormat.JPEG, 2);
+            jpegReader.setOnImageAvailableListener(rd -> {
+                try (Image im = rd.acquireNextImage()) {
+                    if (im != null && res.jpeg == null) {
+                        ByteBuffer b = im.getPlanes()[0].getBuffer();
+                        byte[] a = new byte[b.remaining()];
+                        b.get(a);
+                        res.jpeg = a;
+                        res.width = im.getWidth();
+                        res.height = im.getHeight();
+                        gotJpeg.countDown();
+                    }
+                } catch (Throwable t) {
+                    error = t;
+                    gotJpeg.countDown();
+                }
+            }, h);
+            outs.add(jpegReader.getSurface());
+        }
+        if (useRaw) {
+            rawReader = ImageReader.newInstance(rawSz.getWidth(), rawSz.getHeight(), ImageFormat.RAW_SENSOR, 2);
+            rawReader.setOnImageAvailableListener(rd -> {
+                try {
+                    Image im = rd.acquireNextImage();
+                    if (im != null) {
+                        if (rawImage == null) {
+                            rawImage = im;
+                            gotRaw.countDown();
+                        } else {
+                            im.close();
+                        }
+                    }
+                } catch (Throwable t) {
+                    error = t;
+                    gotRaw.countDown();
+                }
+            }, h);
+            outs.add(rawReader.getSurface());
+        }
+        final CountDownLatch cfg = new CountDownLatch(1);
+        final boolean[] good = {false};
+        try {
+            cam.createCaptureSession(outs, new CameraCaptureSession.StateCallback() {
+                @Override public void onConfigured(CameraCaptureSession s) { session = s; good[0] = true; cfg.countDown(); }
+                @Override public void onConfigureFailed(CameraCaptureSession s) { cfg.countDown(); }
+            }, h);
+        } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
+            return false;
+        }
+        if (!cfg.await(6, TimeUnit.SECONDS)) return false;
+        return good[0];
+    }
+
+    private void releaseOutputs() {
+        try { if (session != null) session.close(); } catch (Throwable ignored) { }
+        session = null;
+        try { if (jpegReader != null) jpegReader.close(); } catch (Throwable ignored) { }
+        try { if (rawReader != null) rawReader.close(); } catch (Throwable ignored) { }
+        try { if (previewSurface != null) previewSurface.release(); } catch (Throwable ignored) { }
+        try { if (st != null) st.release(); } catch (Throwable ignored) { }
+        jpegReader = null; rawReader = null; previewSurface = null; st = null;
+        rawImage = null;
+        res.jpeg = null;
     }
 
     private void check() throws IOException {
