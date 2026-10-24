@@ -603,6 +603,33 @@ public class CameraToolsPlugin extends Plugin {
         return false;
     }
 
+    /** 連拍多張 → 對齊、去鬼影、平均(降噪、提高細節)。失敗回傳 null。 */
+    private Bitmap mergeBurst(java.util.List<byte[]> jpegs) {
+        try {
+            int n = jpegs.size();
+            int[][] fr = new int[n][];
+            int w = -1, h = -1, used = 0;
+            for (int i = 0; i < n; i++) {
+                progress("讀取連拍 " + (i + 1) + "/" + n);
+                Bitmap b = BitmapFactory.decodeByteArray(jpegs.get(i), 0, jpegs.get(i).length);
+                if (b == null) continue;
+                if (w < 0) { w = b.getWidth(); h = b.getHeight(); }
+                if (b.getWidth() != w || b.getHeight() != h) { b.recycle(); continue; }
+                fr[used] = new int[w * h];
+                b.getPixels(fr[used], 0, w, 0, 0, w, h);
+                b.recycle();
+                used++;
+            }
+            if (used < 2) return null;
+            if (used < n) fr = java.util.Arrays.copyOf(fr, used);
+            int[] merged = SuperRes.merge(fr, w, h, 1f, w, h, this::progress);
+            fr = null;
+            return Bitmap.createBitmap(merged, w, h, Bitmap.Config.ARGB_8888);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /** 以 Camera2 直接拍照(獨占鏡頭;呼叫前 WebView 預覽必須先停止)。 */
     @PluginMethod
     public void captureNative(PluginCall call) {
@@ -621,6 +648,7 @@ public class CameraToolsPlugin extends Plugin {
         Integer q = call.getInt("quality", 95);
         r.jpegQuality = q == null ? 95 : q;
         r.torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
+        r.burst = Math.max(1, Math.min(8, call.getInt("burst", 1)));
         Double zz = call.getDouble("zoom", 1.0);
         r.zoom = zz == null ? 1f : zz.floatValue();
         Double fu = call.getDouble("focusU", -1.0), fv = call.getDouble("focusV", -1.0);
@@ -654,7 +682,12 @@ public class CameraToolsPlugin extends Plugin {
                                 : s.jpegOrientationDeg == 270 ? ExifInterface.ORIENTATION_ROTATE_270
                                 : ExifInterface.ORIENTATION_NORMAL;
                     }
-                    Bitmap bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
+                    Bitmap bmp = null;
+                    if (s.frames.size() > 1) {
+                        bmp = mergeBurst(s.frames);
+                        if (bmp == null) s.notes.append("連拍合成失敗(記憶體不足或尺寸不一致),改存第一張;");
+                    }
+                    if (bmp == null) bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
                     if (bmp == null) throw new IOException("JPEG 解碼失敗");
                     bmp = applyOrientation(bmp, orientation);
                     double residual = s.appliedZoom > 1.01f ? Math.max(1.0, r.zoom / s.appliedZoom) : cropZoom;

@@ -47,6 +47,7 @@ final class NativeShot {
         int jpegQuality = 95;
         boolean torch;
         float zoom = 1f;          // 數位變焦倍率:以感測器裁切區域(ISP 放大)實現
+        int burst = 1;            // >1 = 連拍多張供合成降噪(僅 JPEG)
         float focusU = -1f, focusV = -1f;   // 對焦點(直立畫面 0..1),<0 = 畫面中央
     }
 
@@ -55,6 +56,7 @@ final class NativeShot {
         int jpegOrientationDeg;
         boolean yuv;                // 靜態影像來自 YUV 轉成的 JPEG(沒有 EXIF 方向)
         int width, height;
+        java.util.List<byte[]> frames = new java.util.ArrayList<>();   // 連拍的所有 JPEG(含第一張)
         float appliedZoom = 1f;     // 已在感測器端套用的變焦倍率
         StringBuilder notes = new StringBuilder();
     }
@@ -77,7 +79,7 @@ final class NativeShot {
     private final CountDownLatch ready = new CountDownLatch(1);
     private volatile int framesSeen;
     private volatile TotalCaptureResult stillResult;
-    private final CountDownLatch gotResult = new CountDownLatch(1);
+    private volatile CountDownLatch gotResult = new CountDownLatch(1);
     private volatile CountDownLatch gotJpeg = new CountDownLatch(1);
     private volatile CountDownLatch gotRaw = new CountDownLatch(1);
     private Image rawImage;
@@ -293,7 +295,8 @@ final class NativeShot {
             res.jpegOrientationDeg = orient;
             sb.set(CaptureRequest.JPEG_ORIENTATION, orient);
             sb.set(CaptureRequest.JPEG_QUALITY, (byte) Math.max(95, req.jpegQuality));
-            session.capture(sb.build(), new CameraCaptureSession.CaptureCallback() {
+            final CaptureRequest stillReq = sb.build();
+            final CameraCaptureSession.CaptureCallback stillCb = new CameraCaptureSession.CaptureCallback() {
                 @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult tr) {
                     stillResult = tr;
                     gotResult.countDown();
@@ -302,13 +305,24 @@ final class NativeShot {
                     error = new IOException("拍攝失敗(原因 " + f.getReason() + ")");
                     gotResult.countDown(); gotJpeg.countDown(); gotRaw.countDown();
                 }
-            }, h);
-
-            long cap = 10_000L + (manualExp ? req.exposureNs / 1_000_000L * 2 : 0);
-            if (!gotResult.await(cap, TimeUnit.MILLISECONDS)) throw new IOException("等待拍攝結果逾時");
-            check();
-            if (!gotJpeg.await(8, TimeUnit.SECONDS)) throw new IOException("等待 JPEG 逾時");
-            if (!gotRaw.await(8, TimeUnit.SECONDS)) throw new IOException("等待 RAW 逾時");
+            };
+            final int shots = (jpegReader != null && !useRaw) ? Math.max(1, Math.min(8, req.burst)) : 1;
+            for (int k = 0; k < shots; k++) {
+                if (k > 0) {
+                    res.jpeg = null;
+                    gotJpeg = new CountDownLatch(1);
+                    gotResult = new CountDownLatch(1);
+                }
+                session.capture(stillReq, stillCb, h);
+                long cap = 10_000L + (manualExp ? req.exposureNs / 1_000_000L * 2 : 0);
+                if (!gotResult.await(cap, TimeUnit.MILLISECONDS)) throw new IOException("等待拍攝結果逾時");
+                check();
+                if (!gotJpeg.await(8, TimeUnit.SECONDS)) throw new IOException("等待 JPEG 逾時");
+                if (k == 0 && !gotRaw.await(8, TimeUnit.SECONDS)) throw new IOException("等待 RAW 逾時");
+                check();
+                if (res.jpeg != null) res.frames.add(res.jpeg);
+            }
+            if (!res.frames.isEmpty()) res.jpeg = res.frames.get(0);
             check();
 
             if (useRaw && rawImage != null && cc != null && stillResult != null) {

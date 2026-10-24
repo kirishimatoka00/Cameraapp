@@ -137,6 +137,7 @@ async function shootNative(opts, rawWanted) {
     ev: man ? 0 : S.ev,
     torch: S.lightMode === 'torch',
     zoom: S.within > 1.01 ? S.within : 1,
+    burst: rawWanted ? 1 : (st.nativeBurst || 1),
     focusU: S.lastFocus ? S.lastFocus.u : -1,
     focusV: S.lastFocus ? S.lastFocus.v : -1,
   });
