@@ -13,15 +13,6 @@ A.refreshHdrChip = () => {
   else { b.textContent = 'HDR 關'; b.classList.remove('on'); }
   $('btnShutter').classList.toggle('hdr', !!st.hdrOn);
 };
-A.refreshSrChip = () => {
-  const st = A.settings, b = $('btnSR');
-  if (st.srOn) { b.textContent = '超解析 ' + st.srCount + '張'; b.classList.add('on'); }
-  else { b.textContent = '超解析 關'; b.classList.remove('on'); }
-};
-$('btnSR').onclick = () => {
-  A.settings.srOn = !A.settings.srOn; A.saveSettings(); A.refreshSrChip();
-  if (A.settings.srOn) A.toast('超解析:數位變焦 ≥1.5× 時連拍 ' + A.settings.srCount + ' 張合成,請盡量穩穩手持', 3500);
-};
 $('btnHdr').onclick = () => { A.settings.hdrOn = !A.settings.hdrOn; A.saveSettings(); A.refreshHdrChip(); };
 
 A.refreshThumb = async () => {
@@ -61,7 +52,7 @@ function buildEvs(n, range, cap) {
 }
 
 function baseOpts() {
-  return {
+  return Object.assign({
     cropZoom: S.within > 1.01 ? S.within : 1,
     cropAspect: S.frameAR,
     quality: A.settings.jpegQuality,
@@ -70,9 +61,7 @@ function baseOpts() {
     keepOriginal: !!A.settings.keepOriginal,
     mirror: !!(S.front && A.settings.selfieMirror),
     zoomOutMp: A.settings.zoomOutMp || 0,
-    nn: !!A.settings.nnZoom,
-    nnMix: (A.settings.nnMix ?? 40) / 100,
-  };
+  }, A.enhArgs(A.enhEff(A.settings.enhCap)));
 }
 
 async function shootHdr(opts) {
@@ -111,7 +100,7 @@ async function shootHdr(opts) {
 /** 多張合成超解析:連拍後在原生端對齊、合成並放大 */
 async function shootSR(opts) {
   const N = A.needNative();
-  const n = A.settings.srCount;
+  const n = Math.max(4, A.enhEff(A.settings.enhCap).burst);
   await N.clearFrames();
   for (let i = 0; i < n; i++) {
     A.hudSub('連拍 ' + (i + 1) + '/' + n + '(請保持穩定)');
@@ -139,7 +128,7 @@ async function shootNative(opts, rawWanted) {
     ev: man ? 0 : S.ev,
     torch: S.lightMode === 'torch',
     zoom: S.within > 1.01 ? S.within : 1,
-    burst: rawWanted ? 1 : (st.nativeBurst || 1),
+    burst: rawWanted ? 1 : A.enhEff(st.enhCap).burst,
     focusU: S.lastFocus ? S.lastFocus.u : -1,
     focusV: S.lastFocus ? S.lastFocus.v : -1,
   });
@@ -181,8 +170,8 @@ async function shoot() {
       }
     }
     if (!res) {
-      if (st.srOn && opts.cropZoom >= 1.45 && !rawWanted) {
-        if (st.hdrOn) A.toast('超解析與 HDR 不能同時使用,本張以超解析為主', 3000);
+      if (A.enhEff(st.enhCap).burst > 1 && opts.cropZoom >= 1.45 && !rawWanted) {
+        if (st.hdrOn) A.toast('多張合成與 HDR 不能同時使用,本張以多張合成為主', 3000);
         res = await shootSR(opts);
       } else if (st.hdrOn) res = await shootHdr(opts);
       else {

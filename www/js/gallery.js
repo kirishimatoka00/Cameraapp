@@ -303,12 +303,18 @@ $('vUpscale').onclick = async () => {
   A.busy = true;
   try { await A.runUpscale(V.uri); } catch (e) { A.toast('放大失敗:' + A.errMsg(e), 5000); } finally { A.hudHide(); A.busy = false; }
 };
+const enhNnArgs = () => {
+  const s = A.settings.enhSet, e = A.cloneEnh(s && s.enh);
+  const a = A.enhArgs(s && s.on ? e : Object.assign(A.enhZero(), { nnMix: e.nnMix }));
+  a.nn = true;
+  return a;
+};
 $('vNN').onclick = async () => {
   if (A.busy) return;
   A.busy = true;
   A.hud('本機 AI 放大', '約 20~60 秒,請勿離開 App');
   try {
-    const r = await A.needNative().nnUpscale({ uri: V.uri, quality: A.settings.jpegQuality, nnMix: (A.settings.nnMix ?? 40) / 100 });
+    const r = await A.needNative().nnUpscale(Object.assign({ uri: V.uri, quality: A.settings.jpegQuality }, enhNnArgs()));
     A.refreshThumb();
     A.toast('完成:' + r.width + '×' + r.height + '(' + r.megapixels.toFixed(1) + ' MP)', 3500);
     if (A.showViewerUri) await A.showViewerUri(r.uri);

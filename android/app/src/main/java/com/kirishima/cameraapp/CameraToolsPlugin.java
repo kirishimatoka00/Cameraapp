@@ -491,6 +491,45 @@ public class CameraToolsPlugin extends Plugin {
     private volatile double targetMpFlag;
     private volatile boolean nnFlag;
     private volatile float nnMix = 0.4f;
+    private volatile float dnLuma, dnChroma, sharpAmt;
+
+    private void readEnh(PluginCall call) {
+        nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
+        nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+        dnLuma = Math.max(0f, Math.min(100f, call.getFloat("dnLuma", 0f)));
+        dnChroma = Math.max(0f, Math.min(100f, call.getFloat("dnChroma", 0f)));
+        sharpAmt = Math.max(0f, Math.min(100f, call.getFloat("sharpen", 0f)));
+    }
+
+    private boolean enhPixelActive() { return dnLuma > 0f || dnChroma > 0f || sharpAmt > 0f; }
+
+    /** 降噪(在放大前,雜訊尚未被放大)。回傳可變 bitmap。 */
+    private Bitmap enhDenoise(Bitmap bmp) {
+        if (dnLuma <= 0f && dnChroma <= 0f) return bmp;
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        if ((long) w * h > 40_000_000L) { progress("影像超過 40MP,略過降噪"); return bmp; }
+        progress("降噪");
+        int[] px = new int[w * h];
+        bmp.getPixels(px, 0, w, 0, 0, w, h);
+        LookMath.denoise(px, w, h, dnLuma, dnChroma);
+        bmp = ensureMutable(bmp);
+        bmp.setPixels(px, 0, w, 0, 0, w, h);
+        return bmp;
+    }
+
+    /** 銳利度(在放大後、調色前)。 */
+    private Bitmap enhSharpen(Bitmap bmp) {
+        if (sharpAmt <= 0f) return bmp;
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        if ((long) w * h > 40_000_000L) { progress("影像超過 40MP,略過銳化"); return bmp; }
+        progress("銳化");
+        int[] px = new int[w * h];
+        bmp.getPixels(px, 0, w, 0, 0, w, h);
+        LookMath.sharpen(px, w, h, sharpAmt);
+        bmp = ensureMutable(bmp);
+        bmp.setPixels(px, 0, w, 0, 0, w, h);
+        return bmp;
+    }
 
     /** 把 AI 放大結果與一般放大的原圖按比例混合,找回被 AI 抹掉的細節紋理。 */
     private static Bitmap blendWithBase(Bitmap nn, Bitmap base, float mix) {
@@ -521,6 +560,7 @@ public class CameraToolsPlugin extends Plugin {
                                    LookMath.Params p, boolean keepOriginal) throws IOException {
         bmp = centerCropAspect(bmp, aspect);
         bmp = centerCrop(bmp, zoom);
+        bmp = enhDenoise(bmp);
         boolean nnDone = false;
         if (nnFlag && zoom > 1.01 && (long) bmp.getWidth() * bmp.getHeight() <= 1_800_000L) {
             try {
@@ -554,6 +594,7 @@ public class CameraToolsPlugin extends Plugin {
             if (fl != bmp) bmp.recycle();
             bmp = fl;
         }
+        bmp = enhSharpen(bmp);
         Uri original = null;
         try {
             if (!p.neutral() && keepOriginal) {
@@ -595,8 +636,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
-                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
-                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+                readEnh(call);
                 byte[] bytes = Base64.decode(data, Base64.DEFAULT);
                 int orientation = orientationOf(new ByteArrayInputStream(bytes));
                 BitmapFactory.Options b = new BitmapFactory.Options();
@@ -607,7 +647,7 @@ public class CameraToolsPlugin extends Plugin {
                 int uw = swap ? b.outHeight : b.outWidth, uh = swap ? b.outWidth : b.outHeight;
                 boolean needAspect = cropAspect > 0 && uh > 0 && Math.abs(uw / (double) uh - cropAspect) >= 0.004;
                 if (orientation == ExifInterface.ORIENTATION_NORMAL && cropZoom <= 1.01 && !needAspect
-                        && params.neutral() && !mirror) {
+                        && params.neutral() && !mirror && !enhPixelActive() && !nnFlag) {
                     call.resolve(describe(writeBytes(prefix, bytes)));
                     return;
                 }
@@ -730,8 +770,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
-                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
-                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+                readEnh(call);
                 progress("以原生相機拍攝");
                 NativeShot.Result s = NativeShot.shoot(getContext(), r);
                 JSObject res;
@@ -845,6 +884,7 @@ public class CameraToolsPlugin extends Plugin {
         final int quality = q == null ? 95 : q;
         final String prefix = call.getString("prefix", "EDIT");
         final LookMath.Params params = parseParams(call.getObject("look"));
+        readEnh(call);
         if (uriStr == null) {
             call.reject("缺少 uri");
             return;
@@ -865,7 +905,9 @@ public class CameraToolsPlugin extends Plugin {
                     rest.saturation = params.saturation;
                     rest.detail = params.detail;
                     bmp = ensureMutable(bmp);
+                    bmp = enhDenoise(bmp);
                     applyLook(bmp, rest);
+                    bmp = enhSharpen(bmp);
                     progress("編碼 JPEG");
                     Uri outRaw = writeBitmap(prefix, bmp, quality);
                     call.resolve(describe(outRaw));
@@ -880,8 +922,24 @@ public class CameraToolsPlugin extends Plugin {
                 }
                 progress("讀取原圖");
                 bmp = loadUpright(uri, 0);
+                bmp = enhDenoise(bmp);
+                if (nnFlag) {
+                    double spx = (double) bmp.getWidth() * bmp.getHeight();
+                    if (spx <= 2.5e6) {
+                        Bitmap up = NeuralSR.upscale4x(getContext(), bmp, this::progress);
+                        double haveU = (double) up.getWidth() * up.getHeight();
+                        double wantU = Math.min(spx * 4, 16e6);
+                        if (wantU < haveU * 0.95) up = downscaleSmooth(up, wantU);
+                        up = blendWithBase(up, bmp, nnMix);
+                        bmp.recycle();
+                        bmp = up;
+                    } else {
+                        progress("影像大於 2.5MP,略過 AI 放大(適用小圖/裁切圖)");
+                    }
+                }
                 bmp = ensureMutable(bmp);
                 applyLook(bmp, params);
+                bmp = enhSharpen(bmp);
                 progress("編碼 JPEG");
                 Uri out = writeBitmap(prefix, bmp, quality);
                 call.resolve(describe(out));
@@ -1512,7 +1570,7 @@ public class CameraToolsPlugin extends Plugin {
         final int quality = call.getInt("quality", 95);
         final double maxIn = call.getDouble("maxInputMp", 1.8);
         final double outMp = call.getDouble("outputMp", 0.0);
-        nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+        readEnh(call);
         final String prefix = call.getString("prefix", "NN");
         if (uriStr == null) {
             call.reject("缺少 uri");
@@ -1529,12 +1587,14 @@ public class CameraToolsPlugin extends Plugin {
                     if (s2 != src) src.recycle();
                     src = s2;
                 }
+                src = enhDenoise(src);
                 Bitmap up = NeuralSR.upscale4x(getContext(), src, this::progress);
                 double have = (double) up.getWidth() * up.getHeight();
                 double want = outMp > 0 ? outMp * 1e6 : Math.min(have, 36e6);
                 if (want < have * 0.95) up = downscaleSmooth(up, want);
                 up = blendWithBase(up, src, nnMix);
                 src.recycle();
+                up = enhSharpen(up);
                 progress("編碼 JPEG");
                 Uri out = writeBitmap(prefix, up, quality);
                 up.recycle();
@@ -1666,8 +1726,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirrorHdr;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
-                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
-                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+                readEnh(call);
                 call.resolve(fuseFrames(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));
@@ -1690,8 +1749,7 @@ public class CameraToolsPlugin extends Plugin {
             try {
                 mirrorFlag = mirror;
                 targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
-                nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
-                nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+                readEnh(call);
                 call.resolve(superRes(count, quality, cropZoom, cropAspect, params, keepOriginal));
             } catch (Throwable t) {
                 call.reject(msg(t));

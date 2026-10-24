@@ -49,7 +49,7 @@
     <div class="chips" id="topChips">
       <button class="chip" id="btnRaw" hidden>RAW</button>
       <button class="chip" id="btnHdr">HDR 關</button>
-      <button class="chip" id="btnSR">超解析 關</button>
+      <button class="chip" id="btnEnh">畫質 關</button>
       <button class="chip" id="btnRatio">3:4</button>
       <button class="chip" id="btnGrid">格線</button>
       <button class="chip" id="btnFocusAssist">對焦 單點</button>
@@ -113,6 +113,17 @@
       <button class="icon-btn small" id="csClose" aria-label="關閉">✕</button>
     </div>
     <div class="sheet-body" id="csBody"></div>
+  </div>
+</div>
+
+<!-- 畫質提升選單 -->
+<div id="enhSheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <h2>畫質提升</h2>
+      <button class="icon-btn small" id="enClose" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body" id="enhBody"></div>
   </div>
 </div>
 
@@ -258,13 +269,14 @@
     </section>
 
     <section class="card">
+      <h2>畫質提升</h2>
+      <div id="enhSettingsBox"></div>
+      <div class="wb-row" style="margin-top:10px"><button class="mini" id="btnEnhToCap">把這組設定複製到拍攝選單</button></div>
+      <p class="note">這裡的設定(含啟用開關)與拍攝介面的「畫質」選單各自獨立,互不連動:設定頁這組是後期修圖與相簿 AI 放大的預設值;拍攝選單那組只管拍照。多張合成對原生望遠任何倍率有效,主鏡頭則在數位變焦 ≥1.5× 時有效;AI 放大僅作用於數位變焦的裁切區;RAW 拍攝不套用。降噪與銳利度對所有 JPEG 有效。設定檔可在兩邊共用。</p>
+    </section>
+
+    <section class="card">
       <h2>HDR 合成</h2>
-      <label class="switch"><input type="checkbox" id="setSrOn"><span>預設開啟「多張合成超解析」(數位變焦 ≥1.5× 時連拍合成)</span></label>
-      <label class="field">
-        <span>超解析連拍張數</span>
-        <select id="setSrCount" class="txt"><option value="4">4 張</option><option value="6">6 張</option><option value="8">8 張</option></select>
-        <small>手持的細微晃動提供亞像素資訊;三腳架固定時效果有限。移動物體會自動排除。若同時開啟 HDR,以超解析優先。</small>
-      </label>
       <label class="switch"><input type="checkbox" id="setHdrOn"><span>預設開啟 HDR</span></label>
       <label class="field">
         <span>合成張數</span>
@@ -288,16 +300,6 @@
       <h2>色彩與輸出</h2>
       <label class="switch"><input type="checkbox" id="setApply"><span>拍攝時套用目前色彩設定</span></label>
       <label class="switch"><input type="checkbox" id="setKeep"><span>同時保留未調色的原始檔</span></label>
-      <label class="switch"><input type="checkbox" id="setNnZoom"><span>數位變焦時使用本機 AI 放大(Real-ESRGAN,裁切區 ≤1.8MP,約多花 20~60 秒)</span></label>
-      <label class="field">
-        <span>AI 放大強度(越低越保留原始細節/銳利,越高越平滑)</span>
-        <select id="setNnMix" class="txt"><option value="0">0%(僅一般放大)</option><option value="25">25%</option><option value="40">40%</option><option value="60">60%</option><option value="100">100%</option></select>
-      </label>
-      <label class="field">
-        <span>原生望遠拍攝:連拍合成張數(降噪、提高細節)</span>
-        <select id="setNativeBurst" class="txt"><option value="1">1 張(不合成)</option><option value="3">3 張</option><option value="4">4 張</option><option value="6">6 張</option></select>
-        <small>會多花幾秒到十幾秒合成;RAW 拍攝不適用。</small>
-      </label>
       <label class="switch"><input type="checkbox" id="setNativePrev"><span>望遠鏡頭使用原生即時預覽(預覽畫面才是真的望遠)</span></label>
       <label class="field">
         <span>數位變焦輸出畫素</span>
@@ -360,6 +362,7 @@
 <script src="js/core.js"></script>
 <script src="js/look.js"></script>
 <script src="js/lookui.js"></script>
+<script src="js/enhance.js"></script>
 <script src="js/camera.js"></script>
 <script src="js/vision.js"></script>
 <script src="js/capture.js"></script>

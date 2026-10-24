@@ -5,20 +5,48 @@ const A = window.A;
 const $ = A.$;
 
 const E = { uri: null, look: null, base: null, neutral: null, w: 0, h: 0, ctrl: null, pick: null, raf: 0, built: false,
-  raw: false, devKey: '', devTimer: 0, devBusy: false };
+  raw: false, devKey: '', devTimer: 0, devBusy: false, enhSt: null, dn: null, dnKey: '', dnTimer: 0 };
 const cv = $('eCanvas');
 const ctx = cv.getContext('2d', { willReadFrequently: true });
 
 function render() {
   E.raf = 0;
   if (!E.base) return;
-  const img = new ImageData(new Uint8ClampedArray(E.base.data), E.w, E.h);
+  const img = new ImageData(new Uint8ClampedArray(dnBase().data), E.w, E.h);
   let p = A.lookParams(E.look);
   // RAW:EV 與白平衡增益已在原生端於線性空間處理,這裡只做其餘調整
   if (E.raw) p = Object.assign({}, p, { ev: 0, gains: [1, 1, 1] });
   A.processPixels(img.data, p);
   if (p.detail > 0) A.unsharp(img.data, E.w, E.h, A.detailAmount(p.detail), A.detailRadius(E.w, E.h));
+  const en = enhNow();
+  if (en.sharp > 0) A.unsharp(img.data, E.w, E.h, en.sharp / 100 * 1.2, A.detailRadius(E.w, E.h));
   ctx.putImageData(img, 0, 0);
+}
+
+const enhNow = () => A.enhEff(E.enhSt);
+/** 降噪後的底圖(有快取;參數變動時延遲重算,預覽為近似效果) */
+function dnBase() {
+  const en = enhNow();
+  if (!(en.dnL > 0 || en.dnC > 0)) return E.base;
+  const key = en.dnL + '|' + en.dnC;
+  if (E.dn && E.dnKey === key) return E.dn;
+  return E.dn || E.base;
+}
+function scheduleDn() {
+  clearTimeout(E.dnTimer);
+  E.dnTimer = setTimeout(() => {
+    if (!E.base) return;
+    const en = enhNow();
+    if (en.dnL > 0 || en.dnC > 0) {
+      const key = en.dnL + '|' + en.dnC;
+      if (E.dnKey !== key) {
+        const d = new ImageData(new Uint8ClampedArray(E.base.data), E.w, E.h);
+        A.denoiseRGBA(d.data, E.w, E.h, en.dnL, en.dnC);
+        E.dn = d; E.dnKey = key;
+      }
+    }
+    schedule();
+  }, 180);
 }
 function schedule() {
   if (!E.raf) E.raf = requestAnimationFrame(render);
@@ -41,6 +69,7 @@ async function redevelop() {
     if (!E.raw || !E.base) return;
     ctx.drawImage(img, 0, 0, E.w, E.h);
     E.base = ctx.getImageData(0, 0, E.w, E.h);
+    E.dn = null; E.dnKey = '';
     E.devKey = key;
     render();
   } catch (e) { A.toast('RAW 顯影失敗:' + A.errMsg(e), 3000); }
@@ -62,6 +91,19 @@ function buildPanel() {
 
   const ctrlBox = document.createElement('div');
   panel.appendChild(ctrlBox);
+
+  const enhBox = document.createElement('div');
+  enhBox.style.marginTop = '16px';
+  const enhTitle = document.createElement('div');
+  enhTitle.className = 'k-row'; enhTitle.style.marginBottom = '8px'; enhTitle.textContent = '畫質提升(降噪、銳利、AI 放大)';
+  const enhInner = document.createElement('div');
+  enhBox.appendChild(enhTitle); enhBox.appendChild(enhInner);
+  panel.appendChild(enhBox);
+  A.buildEnhPanel(enhInner, E.enhSt, { toggleLabel: '套用畫質提升', showBurst: false, showNN: true, onChange: () => { scheduleDn(); schedule(); } });
+  const enhNote = document.createElement('p');
+  enhNote.className = 'note';
+  enhNote.textContent = '預覽的降噪為縮圖近似效果;儲存時以原始解析度處理。AI 放大只適用 ≤2.5MP 的影像(裁切圖/小圖),輸出約 2 倍邊長。';
+  panel.appendChild(enhNote);
 
   const row = document.createElement('div');
   row.className = 'wb-row';
@@ -125,7 +167,9 @@ A.openEditor = async (uri) => {
   if (A.busy) return;
   E.uri = uri;
   E.look = A.neutralLook();
-  E.base = null; E.neutral = null; E.devKey = '';
+  E.base = null; E.neutral = null; E.devKey = ''; E.dn = null; E.dnKey = '';
+  A.ensureEnhState();
+  { const s0 = A.settings.enhSet; E.enhSt = { on: !!s0.on, id: s0.id, enh: A.cloneEnh(s0.enh) }; }
   const item = (A.gallery.items || []).find((g) => g.uri === uri);
   E.raw = !!(item && A.isRawItem(item));
   if (!E.built) { E.built = true; }
@@ -152,6 +196,7 @@ A.openEditor = async (uri) => {
     ctx.drawImage(img, 0, 0);
     E.base = ctx.getImageData(0, 0, E.w, E.h);
     if (E.raw) E.neutral = E.base;
+    scheduleDn();
   } catch (e) {
     A.toast('無法載入影像:' + A.errMsg(e), 4000);
     A.closeOverlay($('editor'));
@@ -159,19 +204,19 @@ A.openEditor = async (uri) => {
 };
 
 $('eBack').onclick = () => A.closeOverlay($('editor'));
-$('eReset').onclick = () => { E.look = A.neutralLook(); if (E.ctrl) E.ctrl.refresh(); schedule(); };
+$('eReset').onclick = () => { E.look = A.neutralLook(); E.enhSt.on = false; buildPanel(); scheduleDn(); schedule(); };
 document.addEventListener('overlayclose', (e) => {
-  if (e.target && e.target.id === 'editor') { E.base = null; E.neutral = null; E.raw = false; clearTimeout(E.devTimer); E.pick = null; $('ePickHint').hidden = true; }
+  if (e.target && e.target.id === 'editor') { E.base = null; E.neutral = null; E.raw = false; clearTimeout(E.devTimer); clearTimeout(E.dnTimer); E.dn = null; E.pick = null; $('ePickHint').hidden = true; }
 });
 
 async function saveEdited(prefix) {
   const p = A.lookParams(E.look);
-  return A.needNative().editImage({ uri: E.uri, look: p, quality: A.settings.jpegQuality, prefix: prefix || 'EDIT' });
+  return A.needNative().editImage(Object.assign({ uri: E.uri, look: p, quality: A.settings.jpegQuality, prefix: prefix || 'EDIT' }, A.enhArgs(enhNow())));
 }
 
 $('eSave').onclick = async () => {
   if (A.busy || !E.base) return;
-  if (!E.raw && A.paramsNeutral(A.lookParams(E.look))) { A.toast('尚未做任何調整'); return; }
+  if (!E.raw && A.paramsNeutral(A.lookParams(E.look)) && !A.enhActive(enhNow())) { A.toast('尚未做任何調整'); return; }
   A.busy = true;
   A.hud(E.raw ? 'RAW 顯影並儲存' : '儲存編輯', '以原始解析度處理');
   try {
@@ -188,7 +233,7 @@ async function aiEnhance() {
   A.busy = true;
   try {
     let uri = E.uri;
-    if (E.raw || !A.paramsNeutral(A.lookParams(E.look))) {
+    if (E.raw || !A.paramsNeutral(A.lookParams(E.look)) || A.enhActive(enhNow())) {
       A.hud(E.raw ? 'RAW 顯影' : '套用調整', '');
       uri = (await saveEdited('EDIT')).uri;
     }

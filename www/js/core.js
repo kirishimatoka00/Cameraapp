@@ -44,8 +44,6 @@ A.DEFAULTS = {
   enhancePrompt: A.DEFAULT_ENHANCE_PROMPT,
   // HDR
   hdrOn: false,
-  srOn: false,
-  srCount: 6,
   hdrCount: 5,
   hdrRange: 2,
   hdrSettle: 550,
@@ -68,9 +66,9 @@ A.DEFAULTS = {
   selfieMirror: true,
   zoomOutMp: 9,
   nativePreview: true,
-  nativeBurst: 3,
-  nnZoom: true,
-  nnMix: 40,
+  enhProfiles: [],       // 自訂畫質設定檔 [{id,name,enh}]
+  enhCap: null,          // 拍攝選單的畫質提升 {on,id,enh}
+  enhSet: null,          // 設定頁(後期修圖/相簿)的畫質提升
   rawJpeg: true,
   teleNativeId: '',
   // 影片

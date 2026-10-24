@@ -64,8 +64,6 @@ function sync() {
   $('setHist').checked = st.histogram;
   $('setFaceAuto').checked = st.faceAuto;
   $('setHdrOn').checked = st.hdrOn;
-  $('setSrOn').checked = !!st.srOn;
-  $('setSrCount').value = String(st.srCount);
   $('setHdrCount').value = String(st.hdrCount);
   $('setHdrRange').value = String(st.hdrRange);
   $('setSettle').value = st.hdrSettle;
@@ -73,9 +71,6 @@ function sync() {
   $('setKeep').checked = st.keepOriginal;
   $('setRawJpeg').checked = st.rawJpeg;
   $('setMirror').checked = st.selfieMirror;
-  $('setNnZoom').checked = st.nnZoom !== false;
-  $('setNnMix').value = String(st.nnMix ?? 40);
-  $('setNativeBurst').value = String(st.nativeBurst || 1);
   $('setNativePrev').checked = st.nativePreview !== false;
   $('setZoomMp').value = String(st.zoomOutMp == null ? 9 : st.zoomOutMp);
   $('setTeleId').value = st.teleNativeId || '';
@@ -94,7 +89,7 @@ A.syncSettingsUI = sync;
 /** 設定變動後,讓整個 UI 與相機狀態跟上 */
 A.applySettingsToUi = () => {
   A.refreshHdrChip();
-  A.refreshSrChip();
+  A.refreshEnhChip();
   A.updateRatioChip();
   A.updateGrid();
   A.updateFocusChip();
@@ -107,7 +102,15 @@ A.applySettingsToUi = () => {
 };
 
 A.bindSettings = () => {
-  $('btnSettings').onclick = () => { sync(); A.openOverlay($('settings')); };
+  const buildSetEnh = () => {
+    A.ensureEnhState();
+    A.buildEnhPanel($('enhSettingsBox'), st.enhSet, { toggleLabel: '啟用畫質提升(後期修圖/相簿預設)', showBurst: true, showNN: true });
+  };
+  $('btnEnhToCap').onclick = () => {
+    st.enhCap.id = st.enhSet.id; st.enhCap.enh = A.cloneEnh(st.enhSet.enh); st.enhCap.on = true;
+    A.saveSettings(); A.refreshEnhChip(); A.toast('已複製到拍攝選單並啟用');
+  };
+  $('btnSettings').onclick = () => { sync(); buildSetEnh(); A.openOverlay($('settings')); };
   $('sClose').onclick = () => A.closeOverlay($('settings'));
 
   $('setKey').oninput = (e) => { st.apiKey = e.target.value.trim(); A.saveSettings(); };
@@ -137,8 +140,6 @@ A.bindSettings = () => {
   $('setFaceAuto').onchange = (e) => { st.faceAuto = e.target.checked; A.saveSettings(); };
 
   $('setHdrOn').onchange = (e) => { st.hdrOn = e.target.checked; A.saveSettings(); A.refreshHdrChip(); };
-  $('setSrOn').onchange = (e) => { st.srOn = e.target.checked; A.saveSettings(); A.refreshSrChip(); };
-  $('setSrCount').onchange = (e) => { st.srCount = parseInt(e.target.value, 10); A.saveSettings(); A.refreshSrChip(); };
   $('setHdrCount').onchange = (e) => { st.hdrCount = parseInt(e.target.value, 10); A.saveSettings(); A.refreshHdrChip(); };
   $('setHdrRange').onchange = (e) => { st.hdrRange = parseFloat(e.target.value); A.saveSettings(); A.refreshHdrChip(); };
   $('setSettle').onchange = (e) => {
@@ -148,9 +149,6 @@ A.bindSettings = () => {
 
   $('setApply').onchange = (e) => { st.applyOnCapture = e.target.checked; A.saveSettings(); };
   $('setKeep').onchange = (e) => { st.keepOriginal = e.target.checked; A.saveSettings(); };
-  $('setNnMix').onchange = (e) => { st.nnMix = +e.target.value; A.saveSettings(); };
-  $('setNnZoom').onchange = (e) => { st.nnZoom = e.target.checked; A.saveSettings(); };
-  $('setNativeBurst').onchange = (e) => { st.nativeBurst = parseInt(e.target.value, 10); A.saveSettings(); };
   $('setNativePrev').onchange = async (e) => { st.nativePreview = e.target.checked; A.saveSettings(); try { await A.restartLens(); } catch (e2) { /* ignore */ } };
   $('setZoomMp').onchange = (e) => { st.zoomOutMp = parseFloat(e.target.value); A.saveSettings(); };
   $('setMirror').onchange = (e) => { st.selfieMirror = e.target.checked; A.saveSettings(); };

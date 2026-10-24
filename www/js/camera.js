@@ -828,7 +828,7 @@ A.setMode = async (m) => {
   $('videoOpts').hidden = m !== 'video';
   $('btnShutter').setAttribute('aria-label', m === 'video' ? '錄影' : '拍照');
   $('btnHdr').hidden = m === 'video';
-  $('btnSR').hidden = m === 'video';
+  $('btnEnh').hidden = m === 'video';
   A.updateRatioChip();
   if (prev === 'manual' && m !== 'manual') {
     await setExposureAuto();

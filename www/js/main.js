@@ -6,6 +6,7 @@ const S = A.S;
 
 async function init() {
   A.initLookUI();
+  A.initEnhUI();
   A.bindSettings();
   A.bindProgress();
   A.applySettingsToUi();
