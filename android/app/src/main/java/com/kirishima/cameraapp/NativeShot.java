@@ -164,8 +164,8 @@ final class NativeShot {
                 // 隱藏鏡頭讀不到尺寸清單:改試常見尺寸
                 res.notes.append("讀不到此鏡頭的支援尺寸,改試常見尺寸;");
                 jpegCands.clear(); prevCands.clear();
-                int[][] jg = {{4000, 3000}, {4032, 3024}, {3264, 2448}, {2592, 1944}, {2048, 1536}, {1920, 1080}, {1280, 960}, {640, 480}};
-                int[][] pg = {{1440, 1080}, {1280, 960}, {1280, 720}, {640, 480}, {320, 240}};
+                int[][] jg = {{4000, 3000}, {4032, 3024}, {3840, 2880}, {3648, 2736}, {3456, 2592}, {3264, 2448}, {3000, 2250}, {2592, 1944}, {2048, 1536}, {1920, 1080}, {1280, 960}, {640, 480}};
+                int[][] pg = {{1280, 960}, {640, 480}, {320, 240}};
                 for (int[] z : jg) jpegCands.add(new Size(z[0], z[1]));
                 for (int[] z : pg) prevCands.add(new Size(z[0], z[1]));
             }
@@ -190,7 +190,7 @@ final class NativeShot {
                     for (Size ps : prevCands) {
                         for (int rawMode = (wantRaw && !yuv ? 1 : 0); rawMode >= 0; rawMode--) {
                             if (System.currentTimeMillis() - t0 > 40_000L) break outer;
-                            if (passTries >= 8) continue;
+                            if (passTries >= 16) continue;
                             passTries++;
                             attempts++;
                             tried.append(yuv ? "Y:" : "").append(ps.getWidth()).append('x').append(ps.getHeight()).append('+')
