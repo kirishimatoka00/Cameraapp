@@ -89,7 +89,7 @@ async function start() {
   // WebView 必須先釋放鏡頭,Camera2 才能獨占
   A.stopStream();
   await new Promise((res) => setTimeout(res, 250));
-  document.body.classList.add('native-rec');
+  document.documentElement.classList.add('native-rec');
   let info;
   try {
     info = await N.startNativeVideo({
@@ -103,7 +103,7 @@ async function start() {
       zoom: Math.max(1, S.Z / base),
     });
   } catch (e) {
-    document.body.classList.remove('native-rec');
+    document.documentElement.classList.remove('native-rec');
     A.busy = false; A.hudHide();
     try { await A.restartLens(); } catch (e2) { /* ignore */ }
     throw e;
@@ -138,7 +138,7 @@ async function stop() {
     A.toast('影片儲存失敗:' + A.errMsg(e), 6000);
   } finally {
     S.recording = false;
-    document.body.classList.remove('native-rec');
+    document.documentElement.classList.remove('native-rec');
     A.busy = false;
     A.hudHide();
     try { await A.restartLens(); A.applyPreviewZoom(); } catch (e) { A.toast('預覽恢復失敗:' + A.errMsg(e), 4000); }

@@ -208,5 +208,5 @@ textarea.txt { resize: vertical; line-height: 1.5; font-size: 13px; }
 .toast { position: fixed; left: 50%; bottom: calc(150px + var(--safe-b)); transform: translateX(-50%); z-index: 60; max-width: 86%; padding: 11px 16px; border-radius: 14px; background: rgba(32,34,40,.96); border: 1px solid var(--line); font-size: 13px; line-height: 1.5; text-align: center; }
 
 /* 原生錄影:讓 WebView 透明,露出後方的原生預覽 */
-body.native-rec, body.native-rec #app, body.native-rec #frame { background: transparent !important; }
-body.native-rec #video { visibility: hidden; }
+html.native-rec, html.native-rec body, html.native-rec #app, html.native-rec #frame, html.native-rec #viewfinder { background: transparent !important; }
+html.native-rec #video { visibility: hidden; }
