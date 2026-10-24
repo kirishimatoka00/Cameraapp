@@ -521,13 +521,14 @@ final class NativeShot {
         return false;
     }
 
-    /** 靜態拍攝的畫質模式:高品質降噪/銳化/去壞點/色差,並開啟光學防震。 */
+    /** 靜態拍攝的畫質模式:去壞點/色差(降噪銳化關閉),並開啟光學防震。 */
     private void applyQuality(CaptureRequest.Builder b) {
         if (cc == null) return;
-        if (has(cc.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES), CameraMetadata.EDGE_MODE_HIGH_QUALITY))
-            b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY);
-        if (has(cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES), CameraMetadata.NOISE_REDUCTION_MODE_FAST))
-            b.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_FAST);
+        // 銳化與降噪全部交給「畫質提升」設定:機身端一律關閉,拍到的就是未處理的影像
+        if (has(cc.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES), CameraMetadata.EDGE_MODE_OFF))
+            b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF);
+        if (has(cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES), CameraMetadata.NOISE_REDUCTION_MODE_OFF))
+            b.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_OFF);
         if (has(cc.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES), CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY))
             b.set(CaptureRequest.HOT_PIXEL_MODE, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY);
         if (has(cc.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES), CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY))

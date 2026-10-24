@@ -53,6 +53,10 @@ final class NativePreview {
     private float coverSx = 1f, coverSy = 1f;
     private volatile float cAspect = 4f / 3f;   // 直立內容的 高/寬
     private volatile Throwable error;
+    private long expNs = 0;
+    private int isoVal = 0;
+    private float focusMeters = 0f;
+    private float evVal = 0f;
     String info = "";
 
     NativePreview(Activity a, String id, int left, int top, int w, int h, boolean mirror) {
@@ -172,6 +176,7 @@ final class NativePreview {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
             if (torch) builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
             applyZoom();
+            applyControls();
             session.setRepeatingRequest(builder.build(), null, h);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -230,6 +235,72 @@ final class NativePreview {
         builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect);
     }
 
+    /** 手動控制能力(單位與 WebView 版一致:快門 100µs、對焦距離公尺)。 */
+    org.json.JSONObject caps() {
+        org.json.JSONObject o = new org.json.JSONObject();
+        if (cc == null) return o;
+        try {
+            android.util.Range<Long> et = cc.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+            if (et != null) o.put("exposureTime", new org.json.JSONObject().put("min", et.getLower() / 1e5).put("max", Math.min(et.getUpper(), 1_000_000_000L) / 1e5));
+            android.util.Range<Integer> is = cc.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+            if (is != null) o.put("iso", new org.json.JSONObject().put("min", is.getLower()).put("max", is.getUpper()));
+            android.util.Range<Integer> ec = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+            android.util.Rational step = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+            if (ec != null && step != null && ec.getUpper() > 0) {
+                double st = step.doubleValue();
+                o.put("exposureCompensation", new org.json.JSONObject().put("min", ec.getLower() * st).put("max", ec.getUpper() * st).put("step", st));
+            }
+            Float minD = cc.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+            if (minD != null && minD > 0f) o.put("focusDistance", new org.json.JSONObject().put("min", 1.0 / minD).put("max", 10.0));
+            Boolean fl = cc.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+            o.put("torch", fl != null && fl);
+        } catch (Throwable ignored) {
+        }
+        return o;
+    }
+
+    /** exposureMs/iso/focusMeters 為 0 代表自動;ev 只在自動曝光時有效。 */
+    void setManual(double exposureMs, int iso, float focusM, float ev) {
+        expNs = exposureMs > 0 ? Math.round(exposureMs * 1e6) : 0;
+        isoVal = iso;
+        focusMeters = focusM;
+        evVal = ev;
+        if (builder == null || session == null) return;
+        try {
+            applyControls();
+            session.setRepeatingRequest(builder.build(), null, h);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void applyControls() {
+        if (builder == null || cc == null) return;
+        if (expNs > 0) {
+            android.util.Range<Long> et = cc.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+            android.util.Range<Integer> is = cc.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+            long t = et == null ? expNs : Math.max(et.getLower(), Math.min(et.getUpper(), expNs));
+            int iso = isoVal > 0 ? isoVal : 100;
+            if (is != null) iso = Math.max(is.getLower(), Math.min(is.getUpper(), iso));
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF);
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, t);
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
+        } else {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+            android.util.Rational step = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+            if (step != null && step.doubleValue() > 0)
+                builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, (int) Math.round(evVal / step.doubleValue()));
+        }
+        if (focusMeters > 0f) {
+            Float minD = cc.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+            float dio = 1f / focusMeters;
+            if (minD != null) dio = Math.max(0f, Math.min(minD, dio));
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF);
+            builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, dio);
+        } else {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+        }
+    }
+
     void setZoom(float z) {
         zoom = z;
         if (builder == null || session == null) return;
@@ -243,6 +314,7 @@ final class NativePreview {
 
     /** 以預覽內容(直立、0..1)座標對焦並測光。 */
     void focusAt(float u, float v) {
+        if (focusMeters > 0f) return;   // 手動對焦時不做點擊對焦
         if (builder == null || session == null || cc == null || active == null) return;
         try {
             Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);

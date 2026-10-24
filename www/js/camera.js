@@ -171,17 +171,34 @@ function nativeRect() {
   return { left: Math.round(r.left * dpr), top: Math.round(r.top * dpr), w: Math.round(r.width * dpr), h: Math.round(r.height * dpr) };
 }
 
+/** 把手動曝光/對焦/EV 狀態送給原生預覽 */
+function nativeManual() {
+  if (!S.nativePrev) return;
+  const exp = !!S.man.exp;
+  A.needNative().setPreviewManual({
+    exposureMs: exp && S.man.t ? S.man.t / 10 : 0,
+    iso: exp && S.man.iso ? Math.round(S.man.iso) : 0,
+    focusMeters: S.focusManual && S.focusDist ? S.focusDist : 0,
+    ev: exp ? 0 : S.ev,
+  }).catch(() => {});
+}
+A.nativeManual = nativeManual;
+
 async function startNativePrev(L) {
   const rc = nativeRect();
   document.documentElement.classList.add('native-rec');
   S.nativeStarting = true;
   try {
-    await A.needNative().startNativePreview(Object.assign({
+    const r0 = await A.needNative().startNativePreview(Object.assign({
       cameraId: String(L.nativeId), zoom: Math.max(1, S.within || 1),
       mirror: !!(S.front && A.settings.selfieMirror), torch: S.lightMode === 'torch',
     }, rc));
     S.nativePrev = true;
     S.nativePrevKey = [rc.left, rc.top, rc.w, rc.h].join(',');
+    const nc = (r0 && r0.caps) || {};
+    S.caps = Object.assign({}, nc);
+    if (nc.focusDistance) S.caps.focusMode = ['manual', 'continuous'];
+    nativeManual();
   } catch (e) {
     document.documentElement.classList.remove('native-rec');
     throw e;
@@ -552,6 +569,14 @@ const fmtShutter = (v) => {
 };
 
 async function applyManualExposure(force) {
+  if (S.nativePrev && S.caps.exposureTime) {
+    const et = S.caps.exposureTime, iso = S.caps.iso;
+    if (S.man.t == null) S.man.t = 167;   // 約 1/60 秒
+    if (S.man.iso == null && iso) S.man.iso = clamp(200, iso.min, iso.max);
+    S.man.t = clamp(S.man.t, et.min, et.max);
+    nativeManual();
+    return true;
+  }
   if (!S.track || !S.caps.exposureTime) return false;
   const st = S.track.getSettings ? S.track.getSettings() : {};
   const et = S.caps.exposureTime, iso = S.caps.iso;
@@ -571,6 +596,7 @@ A.applyManualExposure = applyManualExposure;
 
 async function setExposureAuto() {
   S.man.exp = false;
+  if (S.nativePrev) { nativeManual(); return; }
   if (!S.track) return;
   try { await S.track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); } catch (e) { /* ignore */ }
   if (S.caps.exposureCompensation) {
@@ -584,12 +610,14 @@ function focusDiopters(c) {
   return [1 / near, 1 / far];   // [近端, 遠端]
 }
 async function applyManualFocus(dist) {
+  if (S.nativePrev) { S.focusManual = true; S.focusDist = dist; nativeManual(); return; }
   if (!S.track) return;
   S.focusManual = true; S.focusDist = dist;
   try { await S.track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: dist }] }); } catch (e) { /* ignore */ }
 }
 async function setFocusAuto() {
   S.focusManual = false; S.focusDist = null;
+  if (S.nativePrev) { nativeManual(); return; }
   if (!S.track) return;
   try { await S.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* ignore */ }
 }
@@ -635,12 +663,14 @@ const PARAMS = {
       let v = c.min + (c.max - c.min) * s / 100;
       if (c.step) v = Math.round(v / c.step) * c.step;
       S.ev = +v.toFixed(2);
+      if (S.nativePrev) nativeManual();
       try { await S.track.applyConstraints({ advanced: [{ exposureCompensation: S.ev }] }); } catch (e) { /* ignore */ }
       return (S.ev > 0 ? '+' : '') + S.ev.toFixed(1);
     },
     text: () => (S.ev > 0 ? '+' : '') + S.ev.toFixed(1),
     auto: async () => {
       S.ev = 0;
+      if (S.nativePrev) nativeManual();
       if (S.track && S.caps.exposureCompensation) {
         try { await S.track.applyConstraints({ advanced: [{ exposureCompensation: 0 }] }); } catch (e) { /* ignore */ }
       }
@@ -855,11 +885,28 @@ const hctx = hist.getContext('2d');
 const hcv = document.createElement('canvas');
 hcv.width = 64; hcv.height = 48;
 const hcx = hcv.getContext('2d', { willReadFrequently: true });
-setInterval(() => {
+const hnc = document.createElement('canvas');
+let histBusy = false;
+async function histSource() {
+  if (S.nativePrev) {
+    const r = await A.needNative().grabPreviewFrame({ width: 64 });
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/jpeg;base64,' + r.data; });
+    hnc.width = img.naturalWidth; hnc.height = img.naturalHeight;
+    hnc.getContext('2d').drawImage(img, 0, 0);
+    return hnc;
+  }
+  if (!S.stream || video.readyState < 2) return null;
+  return video;
+}
+setInterval(async () => {
   hist.hidden = !A.settings.histogram;
-  if (!A.settings.histogram || document.hidden || !S.stream || video.readyState < 2 || S.recording) return;
+  if (!A.settings.histogram || document.hidden || S.recording || histBusy) return;
+  histBusy = true;
   try {
-    hcx.drawImage(video, 0, 0, 64, 48);
+    const src = await histSource();
+    if (!src) return;
+    hcx.drawImage(src, 0, 0, 64, 48);
     const d = hcx.getImageData(0, 0, 64, 48).data;
     const bins = new Array(32).fill(0);
     for (let i = 0; i < d.length; i += 4) {
@@ -875,7 +922,7 @@ setInterval(() => {
     });
     // 過曝提示
     if (bins[31] / (64 * 48) > 0.04) { hctx.fillStyle = '#ff5577'; hctx.fillRect(hist.width - 5, 2, 3, 3); }
-  } catch (e) { /* ignore */ }
+  } catch (e) { /* ignore */ } finally { histBusy = false; }
 }, 500);
 
 /* 影像資訊列 */

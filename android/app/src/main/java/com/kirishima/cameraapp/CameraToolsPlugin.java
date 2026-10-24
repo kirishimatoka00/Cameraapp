@@ -1262,6 +1262,7 @@ public class CameraToolsPlugin extends Plugin {
                 v.start(getBridge().getWebView());
                 JSObject r = new JSObject();
                 r.put("size", v.info);
+                try { r.put("caps", new JSObject(v.caps().toString())); } catch (Throwable ignored) { }
                 call.resolve(r);
             } catch (Throwable t) {
                 np = null;
@@ -1274,6 +1275,14 @@ public class CameraToolsPlugin extends Plugin {
     public void setPreviewZoom(PluginCall call) {
         NativePreview v = np;
         if (v != null) v.setZoom(call.getFloat("zoom", 1f));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setPreviewManual(PluginCall call) {
+        NativePreview v = np;
+        if (v != null) v.setManual(call.getDouble("exposureMs", 0.0), call.getInt("iso", 0),
+                call.getFloat("focusMeters", 0f), call.getFloat("ev", 0f));
         call.resolve();
     }
 
@@ -1802,8 +1811,6 @@ public class CameraToolsPlugin extends Plugin {
         }
         int[] merged = SuperRes.merge(fr, rw, rh, U, outW, outH, this::progress);
         fr = null;
-        progress("銳化");
-        LookMath.unsharp(merged, outW, outH, 0.7f, Math.max(1, Math.round(Math.max(outW, outH) / 2500f)));
         Bitmap out = Bitmap.createBitmap(merged, outW, outH, Bitmap.Config.ARGB_8888);
         Bitmap fin = applyOrientation(out, orientation);
         progress("編碼 JPEG");
