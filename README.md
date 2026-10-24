@@ -40,3 +40,8 @@ cd android && ./gradlew assembleDebug
 - **RAW(DNG)**:只在「手動」模式提供。按下快門時 App 會短暫釋放 WebView 預覽,改用 Camera2 直接輸出 `RAW_SENSOR` 並以 `DngCreator` 寫成 DNG(可選同時存 JPEG)。DNG 為完整感光範圍,不含裁切/調色/變焦。
 - **RAW 編輯**:編輯器內建簡易 DNG 顯影(去馬賽克 → 白平衡 → 色彩矩陣 → 線性 sRGB),EV 與白平衡/色溫/色調在線性空間處理,其餘調整在顯影後套用,存成 JPEG。僅支援未壓縮 16-bit 的 DNG(本 App 拍出的 DNG),其他 DNG 會退回系統解碼。
 - **隱藏望遠鏡頭**:Galaxy Note 10+ 的望遠鏡頭(通常為相機 ID 4)不在系統相機清單內,WebView 看不到。App 會探測隱藏 ID,把它當作 2× 望遠:預覽使用主鏡頭放大 2×,按下快門時才以原生 Camera2 開啟望遠鏡頭拍攝。可在設定頁手動指定 ID。
+
+## Note 10+ 望遠鏡頭(套件名稱偽裝)
+
+Samsung 相機服務只對白名單套件開放隱藏鏡頭。本 App 的套件名稱為 `com.samsung.android.ruler`(參考 mattpilz.com 的作法),此時邏輯鏡頭 **ID 21** 即 2× 望遠。
+安裝前必須先在手機上**解除安裝系統的「快速測量(Quick Measure / Ruler)」**,否則簽章衝突無法安裝;舊版 AI Camera Pro(com.kirishima.cameraapp)是另一個 App,可自行移除。

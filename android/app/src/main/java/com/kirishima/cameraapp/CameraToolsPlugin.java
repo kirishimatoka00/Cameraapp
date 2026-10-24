@@ -310,6 +310,7 @@ public class CameraToolsPlugin extends Plugin {
             // 探測系統沒列出、但可能可由原生開啟的隱藏鏡頭 ID(例如 Note 10+ 的望遠鏡頭常是 4)
             for (int i = 0; i < 10; i++) if (!allIds.contains(String.valueOf(i))) allIds.add(String.valueOf(i));
             for (int i = 50; i < 60; i++) allIds.add(String.valueOf(i));
+            for (String x : new String[]{"20", "21", "22", "23", "40", "41", "80", "91"}) if (!allIds.contains(x)) allIds.add(x);
             for (String id : allIds) {
                 boolean listedId = false;
                 for (String l : listedIds) if (l.equals(id)) listedId = true;
