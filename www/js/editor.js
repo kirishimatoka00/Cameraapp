@@ -80,6 +80,19 @@ async function redevelop() {
 function buildPanel() {
   const panel = $('ePanel');
   panel.innerHTML = '';
+  const enhBox = document.createElement('div');
+  enhBox.style.marginBottom = '18px';
+  const enhTitle = document.createElement('div');
+  enhTitle.className = 'k-row'; enhTitle.style.marginBottom = '8px'; enhTitle.textContent = '畫質提升(降噪、銳利、AI 放大)';
+  const enhInner = document.createElement('div');
+  enhBox.appendChild(enhTitle); enhBox.appendChild(enhInner);
+  panel.appendChild(enhBox);
+  A.buildEnhPanel(enhInner, E.enhSt, { toggleLabel: '套用畫質提升', showBurst: false, showNN: true, onChange: () => { scheduleDn(); schedule(); } });
+  const enhNote = document.createElement('p');
+  enhNote.className = 'note';
+  enhNote.textContent = '預覽的降噪為縮圖近似效果;儲存時以原始解析度處理。AI 放大只適用 ≤2.5MP 的影像(裁切圖/小圖),輸出約 2 倍邊長。';
+  panel.appendChild(enhNote);
+
 
   const prof = document.createElement('div');
   prof.className = 'k-row';
@@ -91,19 +104,6 @@ function buildPanel() {
 
   const ctrlBox = document.createElement('div');
   panel.appendChild(ctrlBox);
-
-  const enhBox = document.createElement('div');
-  enhBox.style.marginTop = '16px';
-  const enhTitle = document.createElement('div');
-  enhTitle.className = 'k-row'; enhTitle.style.marginBottom = '8px'; enhTitle.textContent = '畫質提升(降噪、銳利、AI 放大)';
-  const enhInner = document.createElement('div');
-  enhBox.appendChild(enhTitle); enhBox.appendChild(enhInner);
-  panel.appendChild(enhBox);
-  A.buildEnhPanel(enhInner, E.enhSt, { toggleLabel: '套用畫質提升', showBurst: false, showNN: true, onChange: () => { scheduleDn(); schedule(); } });
-  const enhNote = document.createElement('p');
-  enhNote.className = 'note';
-  enhNote.textContent = '預覽的降噪為縮圖近似效果;儲存時以原始解析度處理。AI 放大只適用 ≤2.5MP 的影像(裁切圖/小圖),輸出約 2 倍邊長。';
-  panel.appendChild(enhNote);
 
   const row = document.createElement('div');
   row.className = 'wb-row';
