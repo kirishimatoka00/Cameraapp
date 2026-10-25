@@ -146,7 +146,73 @@ function buildPanel() {
   bAi.onclick = aiEnhance;
 }
 
+/* ---- 放大檢視:雙指縮放、單指拖曳、雙擊切換 ---- */
+const stage = $('eStage');
+const Zm = { s: 1, x: 0, y: 0, ptrs: new Map(), pinch: null, moved: false, lastTap: 0 };
+const badge = document.createElement('button');
+badge.className = 'mini';
+badge.style.cssText = 'position:absolute;right:10px;top:10px;z-index:3;opacity:.85';
+badge.hidden = true;
+badge.onclick = () => zmSet(1, 0, 0);
+stage.appendChild(badge);
+function zmApply() {
+  const cw = cv.offsetWidth, ch = cv.offsetHeight;
+  const mx = Math.max(0, (cw * Zm.s - stage.clientWidth) / 2), my = Math.max(0, (ch * Zm.s - stage.clientHeight) / 2);
+  Zm.x = A.clamp(Zm.x, -mx, mx); Zm.y = A.clamp(Zm.y, -my, my);
+  cv.style.transform = Zm.s === 1 ? '' : 'translate(' + Zm.x + 'px,' + Zm.y + 'px) scale(' + Zm.s + ')';
+  cv.style.imageRendering = Zm.s >= 4 ? 'pixelated' : '';
+  badge.hidden = Zm.s === 1;
+  badge.textContent = Math.round(Zm.s * 100) + '% ✕';
+}
+function zmSet(s, x, y) { Zm.s = s; Zm.x = x; Zm.y = y; zmApply(); }
+/** 以舞台座標 (px,py)(相對舞台中心)為不動點縮放 */
+function zmAt(px, py, ns) {
+  ns = A.clamp(ns, 1, 12);
+  const k = ns / Zm.s;
+  Zm.x = px - (px - Zm.x) * k; Zm.y = py - (py - Zm.y) * k; Zm.s = ns;
+  zmApply();
+}
+const stagePt = (e) => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 }; };
+stage.addEventListener('pointerdown', (e) => {
+  if (e.target === badge) return;
+  stage.setPointerCapture(e.pointerId);
+  Zm.ptrs.set(e.pointerId, stagePt(e));
+  Zm.moved = false;
+  if (Zm.ptrs.size === 2) {
+    const [a, b] = [...Zm.ptrs.values()];
+    Zm.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: Zm.s };
+  }
+});
+stage.addEventListener('pointermove', (e) => {
+  if (!Zm.ptrs.has(e.pointerId)) return;
+  const prev = Zm.ptrs.get(e.pointerId), cur = stagePt(e);
+  Zm.ptrs.set(e.pointerId, cur);
+  if (Zm.ptrs.size >= 2 && Zm.pinch) {
+    const [a, b] = [...Zm.ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    Zm.moved = true;
+    zmAt((a.x + b.x) / 2, (a.y + b.y) / 2, Zm.pinch.s * d / Zm.pinch.d);
+  } else if (Zm.s > 1) {
+    const dx = cur.x - prev.x, dy = cur.y - prev.y;
+    if (Math.abs(dx) + Math.abs(dy) > 0) { Zm.moved = true; Zm.x += dx; Zm.y += dy; zmApply(); }
+  }
+});
+const zmEnd = (e) => {
+  if (!Zm.ptrs.has(e.pointerId)) return;
+  Zm.ptrs.delete(e.pointerId);
+  if (Zm.ptrs.size < 2) Zm.pinch = null;
+  if (Zm.ptrs.size === 0 && !Zm.moved && e.type === 'pointerup' && !E.pick) {
+    const now = Date.now();
+    if (now - Zm.lastTap < 300) { const p = stagePt(e); if (Zm.s > 1.05) zmSet(1, 0, 0); else zmAt(p.x, p.y, 3); Zm.lastTap = 0; }
+    else Zm.lastTap = now;
+  }
+};
+stage.addEventListener('pointerup', zmEnd);
+stage.addEventListener('pointercancel', zmEnd);
+window.addEventListener('resize', zmApply);
+
 cv.addEventListener('click', (e) => {
+  if (Zm.moved) return;
   if (!E.pick || !E.base) return;
   const r = cv.getBoundingClientRect();
   const x = Math.round((e.clientX - r.left) / r.width * E.w), y = Math.round((e.clientY - r.top) / r.height * E.h);
@@ -168,6 +234,7 @@ A.openEditor = async (uri) => {
   E.uri = uri;
   E.look = A.neutralLook();
   E.base = null; E.neutral = null; E.devKey = ''; E.dn = null; E.dnKey = '';
+  zmSet(1, 0, 0);
   A.ensureEnhState();
   { const s0 = A.settings.enhSet; E.enhSt = { on: !!s0.on, id: s0.id, enh: A.cloneEnh(s0.enh) }; }
   const item = (A.gallery.items || []).find((g) => g.uri === uri);
