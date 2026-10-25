@@ -4,8 +4,8 @@
 const A = window.A;
 const $ = A.$;
 
-const KEYS = ['burst', 'nn', 'nnMix', 'dnL', 'dnC', 'dnS', 'sharp'];
-A.enhZero = () => ({ burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, dnS: 0, sharp: 0 });
+const KEYS = ['burst', 'nn', 'nnMix', 'dnL', 'dnC', 'dnS', 'sharp', 'hal'];
+A.enhZero = () => ({ burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, dnS: 0, sharp: 0, hal: 0 });
 A.cloneEnh = (e) => {
   const z = A.enhZero();
   const o = {};
@@ -15,10 +15,10 @@ A.cloneEnh = (e) => {
 };
 A.ENH_BUILTIN = [
   { id: 'off', name: '無', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, sharp: 0 } },
-  { id: 'std', name: '標準', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 20, dnC: 35, sharp: 30 } },
-  { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: false, nnMix: 40, dnL: 15, dnC: 35, sharp: 40 } },
-  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 45, dnC: 70, dnS: 70, sharp: 25 } },
-  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35 } },
+  { id: 'std', name: '標準', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 20, dnC: 35, sharp: 30, hal: 1 } },
+  { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: false, nnMix: 40, dnL: 15, dnC: 35, sharp: 40, hal: 1 } },
+  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 45, dnC: 70, dnS: 70, sharp: 25, hal: 2 } },
+  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35, hal: 2 } },
 ];
 A.allEnhProfiles = () => A.ENH_BUILTIN.concat(A.settings.enhProfiles || []);
 A.findEnhProfile = (id) => A.allEnhProfiles().find((p) => p.id === id) || null;
@@ -26,9 +26,13 @@ A.findEnhProfile = (id) => A.allEnhProfiles().find((p) => p.id === id) || null;
 /** 確保 settings.enhCap / enhSet 結構完整 */
 A.ensureEnhState = () => {
   const st = A.settings;
-  if (st.enhV !== 2) {   // v2:Real-ESRGAN 會長出怪細節,改為預設關閉並重設強度
-    st.enhV = 2;
+  if (!(st.enhV >= 2)) {   // v2:Real-ESRGAN 會長出怪細節,改為預設關閉並重設強度
     ['enhCap', 'enhSet'].forEach((k) => { if (st[k] && st[k].enh) { st[k].enh.nn = false; st[k].enh.nnMix = 40; } });
+    st.enhV = 2;
+  }
+  if (st.enhV < 3) {       // v3:新增機身降噪(硬體),拍攝預設改用高品質
+    if (st.enhCap && st.enhCap.enh && st.enhCap.enh.hal === undefined) st.enhCap.enh.hal = 2;
+    st.enhV = 3;
   }
   if (!Array.isArray(st.enhProfiles)) st.enhProfiles = [];
   [['enhCap', true, 'detail'], ['enhSet', false, 'std']].forEach(([k, on, id]) => {
@@ -45,9 +49,9 @@ A.ensureEnhState();
 
 /** 實際生效的設定(未啟用 = 全部關閉) */
 A.enhEff = (s) => (s && s.on ? A.cloneEnh(s.enh) : A.enhZero());
-A.enhActive = (e) => e.burst > 1 || e.nn || e.dnL > 0 || e.dnC > 0 || e.dnS > 0 || e.sharp > 0;
+A.enhActive = (e) => e.burst > 1 || e.nn || e.dnL > 0 || e.dnC > 0 || e.dnS > 0 || e.sharp > 0 || e.hal > 0;
 /** 轉成原生外掛參數 */
-A.enhArgs = (e) => ({ nn: !!e.nn, nnMix: e.nnMix / 100, dnLuma: e.dnL, dnChroma: e.dnC, dnShadow: e.dnS, sharpen: e.sharp });
+A.enhArgs = (e) => ({ nn: !!e.nn, nnMix: e.nnMix / 100, dnLuma: e.dnL, dnChroma: e.dnC, dnShadow: e.dnS, sharpen: e.sharp, halNr: e.hal });
 A.enhSame = (a, b) => JSON.stringify(A.cloneEnh(a)) === JSON.stringify(A.cloneEnh(b));
 
 A.saveEnhProfile = (name, enh) => {
@@ -98,7 +102,7 @@ A.buildEnhPanel = (container, st, opts) => {
     rows[key] = { inp, val, row, unit };
   };
 
-  let burstSel = null, nnBox = null, nnRowEl = null;
+  let halSel = null, burstSel = null, nnBox = null, nnRowEl = null;
   if (opts.showBurst !== false) {
     const row = document.createElement('div');
     row.className = 'row';
@@ -116,6 +120,14 @@ A.buildEnhPanel = (container, st, opts) => {
     body.appendChild(row);
     nnRowEl = row;
     addSlider('nnMix', 'AI 強度', 100, '%');
+  }
+  if (opts.showHal !== false) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<span class="n" style="width:78px">機身降噪</span><select class="txt" style="flex:1"><option value="0">關(原始)</option><option value="1">快速</option><option value="2">高品質(硬體,最有效)</option></select>';
+    halSel = row.querySelector('select');
+    halSel.onchange = () => { st.enh.hal = parseInt(halSel.value, 10); changed(); renderChips(); };
+    body.appendChild(row);
   }
   addSlider('dnL', '亮度降噪', 100);
   addSlider('dnC', '色彩降噪', 100);
@@ -173,6 +185,7 @@ A.buildEnhPanel = (container, st, opts) => {
   function refresh() {
     onBox.checked = !!st.on;
     if (burstSel) burstSel.value = String(st.enh.burst);
+    if (halSel) halSel.value = String(st.enh.hal || 0);
     if (nnBox) { nnBox.checked = !!st.enh.nn; rows.nnMix.row.style.display = st.enh.nn ? 'flex' : 'none'; }
     ['nnMix', 'dnL', 'dnC', 'dnS', 'sharp'].forEach((k) => {
       const r = rows[k];

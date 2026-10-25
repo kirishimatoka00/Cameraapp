@@ -126,7 +126,7 @@ const btn = (txt, cls, fn) => { const b = document.createElement('button'); b.cl
 function toolQuality(p) {
   const box = document.createElement('div');
   p.appendChild(box);
-  A.buildEnhPanel(box, E.enhSt, { toggleLabel: '套用畫質提升', showBurst: false, showNN: true, onChange: () => { scheduleDn(); schedule(); } });
+  A.buildEnhPanel(box, E.enhSt, { toggleLabel: '套用畫質提升', showBurst: false, showHal: false, showNN: true, onChange: () => { scheduleDn(); schedule(); } });
   const n = document.createElement('p');
   n.className = 'note';
   n.textContent = '預覽的降噪為縮圖近似效果;儲存時以原始解析度處理。AI 放大只適用 ≤2.5MP 的影像,輸出約 2 倍邊長。';

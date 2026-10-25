@@ -43,6 +43,7 @@ final class NativeShot {
         long exposureNs;          // >0 = 手動曝光
         int iso;                  // 手動曝光時使用
         float focusMeters;        // >0 = 手動對焦(公尺)
+        int halNr = 0;            // 機身降噪:0 關、1 快速、2 高品質
         float ev;                 // 自動曝光時的曝光補償
         int jpegQuality = 95;
         boolean torch;
@@ -527,8 +528,12 @@ final class NativeShot {
         // 銳化與降噪全部交給「畫質提升」設定:機身端一律關閉,拍到的就是未處理的影像
         if (has(cc.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES), CameraMetadata.EDGE_MODE_OFF))
             b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF);
-        if (has(cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES), CameraMetadata.NOISE_REDUCTION_MODE_OFF))
-            b.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_OFF);
+        {
+            int[] modes = cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES);
+            int want = req.halNr >= 2 ? CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                    : req.halNr == 1 ? CameraMetadata.NOISE_REDUCTION_MODE_FAST : CameraMetadata.NOISE_REDUCTION_MODE_OFF;
+            if (has(modes, want)) b.set(CaptureRequest.NOISE_REDUCTION_MODE, want);
+        }
         if (has(cc.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES), CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY))
             b.set(CaptureRequest.HOT_PIXEL_MODE, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY);
         if (has(cc.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES), CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY))

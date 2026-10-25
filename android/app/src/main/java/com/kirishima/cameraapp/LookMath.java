@@ -275,6 +275,7 @@ final class LookMath {
                 });
                 cur = dst;
             }
+            cur = coarseDenoise(cur, w, h, luma, shadow);
             final byte[] fin = cur;
             java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
                 for (int x = 0; x < w; x++) {
@@ -288,6 +289,81 @@ final class LookMath {
                 }
             });
         }
+    }
+
+    /**
+     * 粗尺度降噪:手機雜訊是數像素大的斑塊,全解析度的小視窗濾不掉。
+     * 把亮度縮成一半再做較強的保邊濾波,只在「平坦區」(去噪後梯度小)把結果混回,紋理與邊緣保留原樣。
+     */
+    private static byte[] coarseDenoise(final byte[] cur, final int w, final int h, final float luma, final float shadow) {
+        final int w2 = (w + 1) / 2, h2 = (h + 1) / 2;
+        byte[] y2 = new byte[w2 * h2];
+        for (int y = 0; y < h2; y++) {
+            for (int x = 0; x < w2; x++) {
+                int x1 = Math.min(w - 1, 2 * x + 1), y1 = Math.min(h - 1, 2 * y + 1);
+                int sum = (cur[2 * y * w + 2 * x] & 255) + (cur[2 * y * w + x1] & 255)
+                        + (cur[y1 * w + 2 * x] & 255) + (cur[y1 * w + x1] & 255);
+                y2[y * w2 + x] = (byte) ((sum + 2) >> 2);
+            }
+        }
+        final int R = 2;
+        final float[] sw = new float[25];
+        for (int dy = -R; dy <= R; dy++) for (int dx = -R; dx <= R; dx++)
+            sw[(dy + R) * 5 + dx + R] = (float) Math.exp(-(dx * dx + dy * dy) / (2.0 * 1.4 * 1.4));
+        final float[] lut = new float[256 * 256];
+        final float[] kEff = new float[256];
+        for (int yv = 0; yv < 256; yv++) {
+            float eff = Math.min(100f, luma + shadow * darkness(yv));
+            kEff[yv] = Math.min(1f, eff / 100f) * 0.9f;
+            float sg = 6f + eff / 100f * 60f;
+            for (int d = 0; d < 256; d++) lut[(yv << 8) + d] = (float) Math.exp(-(d * d) / (2.0 * sg * sg));
+        }
+        final byte[] d2 = new byte[w2 * h2];
+        final byte[] src2 = y2;
+        java.util.stream.IntStream.range(0, h2).parallel().forEach(y -> {
+            for (int x = 0; x < w2; x++) {
+                int c0 = src2[y * w2 + x] & 255;
+                float sum = 0f, ws = 0f;
+                for (int dy = -R; dy <= R; dy++) {
+                    int yy = Math.min(h2 - 1, Math.max(0, y + dy));
+                    for (int dx = -R; dx <= R; dx++) {
+                        int xx = Math.min(w2 - 1, Math.max(0, x + dx));
+                        int v = src2[yy * w2 + xx] & 255;
+                        float wt = sw[(dy + R) * 5 + dx + R] * lut[(c0 << 8) + Math.abs(v - c0)];
+                        sum += wt * v;
+                        ws += wt;
+                    }
+                }
+                d2[y * w2 + x] = (byte) Math.round(sum / ws);
+            }
+        });
+        final float[] flat = new float[w2 * h2];
+        for (int y = 0; y < h2; y++) {
+            for (int x = 0; x < w2; x++) {
+                int xl = Math.max(0, x - 1), xr = Math.min(w2 - 1, x + 1), yu = Math.max(0, y - 1), yd = Math.min(h2 - 1, y + 1);
+                int g = Math.abs((d2[y * w2 + xr] & 255) - (d2[y * w2 + xl] & 255)) + Math.abs((d2[yd * w2 + x] & 255) - (d2[yu * w2 + x] & 255));
+                flat[y * w2 + x] = Math.max(0f, 1f - g / 24f);
+            }
+        }
+        final byte[] out = new byte[w * h];
+        java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
+            float fy = Math.max(0f, Math.min(h2 - 1f, (y + 0.5f) / 2f - 0.5f));
+            int y0 = (int) fy, y1 = Math.min(h2 - 1, y0 + 1);
+            float wy = fy - y0;
+            for (int x = 0; x < w; x++) {
+                float fx = Math.max(0f, Math.min(w2 - 1f, (x + 0.5f) / 2f - 0.5f));
+                int x0 = (int) fx, x1 = Math.min(w2 - 1, x0 + 1);
+                float wx = fx - x0;
+                float dv = ((d2[y0 * w2 + x0] & 255) * (1 - wx) + (d2[y0 * w2 + x1] & 255) * wx) * (1 - wy)
+                        + ((d2[y1 * w2 + x0] & 255) * (1 - wx) + (d2[y1 * w2 + x1] & 255) * wx) * wy;
+                float fl = (flat[y0 * w2 + x0] * (1 - wx) + flat[y0 * w2 + x1] * wx) * (1 - wy)
+                        + (flat[y1 * w2 + x0] * (1 - wx) + flat[y1 * w2 + x1] * wx) * wy;
+                int c = cur[y * w + x] & 255;
+                float k = kEff[c] * fl;
+                out[y * w + x] = (byte) Math.max(0, Math.min(255, Math.round(c + k * (dv - c))));
+            }
+        });
+        return out;
     }
 
     /** 銳利度 0..100 → unsharp(僅亮度) */
