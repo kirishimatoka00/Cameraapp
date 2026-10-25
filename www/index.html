@@ -190,16 +190,29 @@
 <div id="editor" class="overlay" hidden>
   <div class="bar">
     <button class="icon-btn" id="eBack" aria-label="返回">‹</button>
-    <h1>編輯</h1>
     <div class="grow"></div>
-    <button class="mini" id="eReset">重設</button>
+    <button class="mini" id="eReset">還原</button>
     <button class="act small primary" id="eSave">儲存</button>
   </div>
   <div class="editor-stage" id="eStage">
-    <canvas id="eCanvas"></canvas>
+    <div id="eWrap">
+      <canvas id="eCanvas"></canvas>
+      <canvas id="eMask"></canvas>
+      <div id="eGrid" hidden></div>
+    </div>
+    <div id="eRing" hidden></div>
     <div class="pick-hint" id="ePickHint" hidden>點擊畫面中應為中性灰/白的位置</div>
   </div>
-  <div class="editor-panel" id="ePanel"></div>
+  <div class="editor-dock">
+    <div class="editor-panel" id="ePanel" hidden></div>
+    <div class="editor-tabs" id="eTabs">
+      <button data-t="quality"><span>✨</span><small>畫質</small></button>
+      <button data-t="geo"><span>📐</span><small>角度變形</small></button>
+      <button data-t="color"><span>🎨</span><small>色彩</small></button>
+      <button data-t="erase"><span>🧽</span><small>橡皮擦</small></button>
+      <button data-t="ai"><span>🤖</span><small>AI 強化</small></button>
+    </div>
+  </div>
 </div>
 
 <!-- 設定頁 -->
@@ -368,6 +381,7 @@
 <script src="js/capture.js"></script>
 <script src="js/video.js"></script>
 <script src="js/gallery.js"></script>
+<script src="js/geo.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/settingsui.js"></script>
 <script src="js/main.js"></script>

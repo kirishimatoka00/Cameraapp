@@ -885,6 +885,11 @@ public class CameraToolsPlugin extends Plugin {
         final String prefix = call.getString("prefix", "EDIT");
         final LookMath.Params params = parseParams(call.getObject("look"));
         readEnh(call);
+        final JSObject geoO = call.getObject("geo");
+        final float gAngle = geoO == null ? 0f : (float) geoO.optDouble("angle", 0), gPv = geoO == null ? 0f : (float) geoO.optDouble("pv", 0),
+                gPh = geoO == null ? 0f : (float) geoO.optDouble("ph", 0);
+        final int gRot = geoO == null ? 0 : geoO.optInt("rot", 0);
+        final boolean gFlip = geoO != null && geoO.optBoolean("flip", false);
         if (uriStr == null) {
             call.reject("缺少 uri");
             return;
@@ -908,6 +913,7 @@ public class CameraToolsPlugin extends Plugin {
                     bmp = enhDenoise(bmp);
                     applyLook(bmp, rest);
                     bmp = enhSharpen(bmp);
+                    if (!Geo.neutral(gAngle, gPv, gPh, gRot, gFlip)) { progress("角度與變形"); bmp = Geo.apply(bmp, gAngle, gPv, gPh, gRot, gFlip); }
                     progress("編碼 JPEG");
                     Uri outRaw = writeBitmap(prefix, bmp, quality);
                     call.resolve(describe(outRaw));
@@ -940,6 +946,7 @@ public class CameraToolsPlugin extends Plugin {
                 bmp = ensureMutable(bmp);
                 applyLook(bmp, params);
                 bmp = enhSharpen(bmp);
+                if (!Geo.neutral(gAngle, gPv, gPh, gRot, gFlip)) { progress("角度與變形"); bmp = Geo.apply(bmp, gAngle, gPv, gPh, gRot, gFlip); }
                 progress("編碼 JPEG");
                 Uri out = writeBitmap(prefix, bmp, quality);
                 call.resolve(describe(out));
@@ -2115,6 +2122,133 @@ public class CameraToolsPlugin extends Plugin {
                 call.resolve(res);
             } catch (Throwable t) {
                 call.reject(msg(t));
+            }
+        });
+    }
+
+
+    /** 送出 Gemini 影像編輯請求(可含多張輸入圖);回傳 {mime, base64}。 */
+    private String[] geminiEdit(String key, String model, String prompt, String imageSize, String ratio, String[] imgsB64, String[] mimes) throws Exception {
+        String errA = null, errB = null;
+        String[] img = null;
+        {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            JSONArray input = new JSONArray();
+            input.put(new JSONObject().put("type", "text").put("text", prompt));
+            for (int i = 0; i < imgsB64.length; i++)
+                input.put(new JSONObject().put("type", "image").put("mime_type", mimes[i]).put("data", imgsB64[i]));
+            body.put("input", input);
+            body.put("response_format", new JSONObject().put("type", "image").put("mime_type", "image/jpeg")
+                    .put("aspect_ratio", ratio).put("image_size", imageSize));
+            body.put("store", false);
+            Http h = request("POST", GEMINI_BASE + "/interactions", key.trim(), body.toString());
+            if (h.code == 200) {
+                img = findImage(new JSONObject(h.body));
+                if (img == null) errA = "回應中沒有影像";
+            } else errA = apiError(h);
+        }
+        if (img == null) {
+            JSONObject body = new JSONObject();
+            JSONArray parts = new JSONArray();
+            parts.put(new JSONObject().put("text", prompt));
+            for (int i = 0; i < imgsB64.length; i++)
+                parts.put(new JSONObject().put("inlineData", new JSONObject().put("mimeType", mimes[i]).put("data", imgsB64[i])));
+            body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
+            body.put("generationConfig", new JSONObject().put("responseModalities", new JSONArray().put("IMAGE"))
+                    .put("imageConfig", new JSONObject().put("aspectRatio", ratio).put("imageSize", imageSize)));
+            Http h = request("POST", GEMINI_BASE + "/models/" + model + ":generateContent", key.trim(), body.toString());
+            if (h.code == 200) {
+                img = findImage(new JSONObject(h.body));
+                if (img == null) errB = "回應中沒有影像(可能被安全機制擋下)";
+            } else errB = apiError(h);
+        }
+        if (img == null) throw new IOException("Gemini 失敗。Interactions:" + errA + (errB == null ? "" : ";generateContent:" + errB));
+        return img;
+    }
+
+    /** 物件橡皮擦:mask 為前端畫的 PNG(alpha>0 為要移除的區域)。mode = local | ai */
+    @PluginMethod
+    public void eraseObjects(PluginCall call) {
+        final String uriStr = call.getString("uri");
+        final String maskB64 = call.getString("mask", "");
+        final String mode = call.getString("mode", "local");
+        final String key = call.getString("apiKey", "");
+        final String model = call.getString("model", "gemini-nano-banana-2.1");
+        final String imageSize = call.getString("imageSize", "2K");
+        final int quality = call.getInt("quality", 95);
+        final String prompt = call.getString("prompt", "");
+        if (uriStr == null || maskB64.isEmpty()) { call.reject("缺少影像或遮罩"); return; }
+        if ("ai".equals(mode) && (key == null || key.trim().isEmpty())) { call.reject("尚未設定 Gemini API key"); return; }
+        exec.execute(() -> {
+            Bitmap src = null;
+            try {
+                progress("讀取原圖");
+                src = loadUpright(Uri.parse(uriStr), 0);
+                src = ensureMutable(src);
+                final int W = src.getWidth(), H = src.getHeight();
+                if ((long) W * H > 40_000_000L) throw new IOException("影像超過 40MP,無法使用橡皮擦");
+                byte[] mb = Base64.decode(maskB64, Base64.DEFAULT);
+                Bitmap mbmp = BitmapFactory.decodeByteArray(mb, 0, mb.length);
+                if (mbmp == null) throw new IOException("遮罩解碼失敗");
+                Bitmap ms = Bitmap.createScaledBitmap(mbmp, W, H, true);
+                if (ms != mbmp) mbmp.recycle();
+                int[] mp = new int[W * H];
+                ms.getPixels(mp, 0, W, 0, 0, W, H);
+                ms.recycle();
+                byte[] mask = new byte[W * H];
+                int cnt = 0;
+                for (int i = 0; i < mp.length; i++) if ((mp[i] >>> 24) > 100) { mask[i] = 1; cnt++; }
+                mp = null;
+                if (cnt == 0) throw new IOException("沒有塗抹任何區域");
+                int grow = Math.max(3, Math.max(W, H) / 450);
+                mask = Eraser.dilate(mask, W, H, grow);
+                Bitmap result;
+                if ("ai".equals(mode)) {
+                    int maxIn = 2048;
+                    double f = Math.min(1.0, maxIn / (double) Math.max(W, H));
+                    int iw = Math.max(16, (int) Math.round(W * f)), ih = Math.max(16, (int) Math.round(H * f));
+                    Bitmap in = Bitmap.createScaledBitmap(src, iw, ih, true);
+                    Bitmap mimg = Bitmap.createBitmap(iw, ih, Bitmap.Config.ARGB_8888);
+                    int[] mo = new int[iw * ih];
+                    for (int y = 0; y < ih; y++) for (int x = 0; x < iw; x++) {
+                        int sx = Math.min(W - 1, (int) ((x + 0.5) / f)), sy = Math.min(H - 1, (int) ((y + 0.5) / f));
+                        mo[y * iw + x] = mask[sy * W + sx] != 0 ? 0xFFFFFFFF : 0xFF000000;
+                    }
+                    mimg.setPixels(mo, 0, iw, 0, 0, iw, ih);
+                    String b1 = Base64.encodeToString(toJpeg(in, 92), Base64.NO_WRAP);
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    mimg.compress(Bitmap.CompressFormat.PNG, 100, bo);
+                    String b2 = Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+                    String ratio = nearestRatio(iw, ih);
+                    in.recycle(); mimg.recycle();
+                    String full = "第一張是原始照片,第二張是黑白遮罩(白色=要移除的物件/區域)。請把第一張照片中遮罩白色區域內的物件完全移除,"
+                            + "並用周圍背景的紋理、光線與透視自然補滿;遮罩以外的內容必須與原圖完全一致,不要改變構圖、色彩、解析度或其他物件。"
+                            + "只輸出編輯後的第一張照片。" + (prompt.isEmpty() ? "" : " 補充:" + prompt);
+                    progress("Gemini 移除物件中(" + model + ")");
+                    String[] img = geminiEdit(key, model, full, imageSize, ratio, new String[]{b1, b2}, new String[]{"image/jpeg", "image/png"});
+                    byte[] raw = Base64.decode(img[1], Base64.DEFAULT);
+                    Bitmap ai = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                    if (ai == null) throw new IOException("無法解碼 Gemini 回傳影像");
+                    Bitmap ai2 = Bitmap.createScaledBitmap(ai, W, H, true);
+                    if (ai2 != ai) ai.recycle();
+                    progress("合成結果");
+                    result = Eraser.compositeAi(src, ai2, mask, Math.max(3, Math.max(W, H) / 700));
+                    ai2.recycle();
+                    src.recycle();
+                    src = null;
+                } else {
+                    result = Eraser.inpaintLocal(src, mask, this::progress);
+                    src = null;
+                }
+                progress("儲存結果");
+                Uri out = writeBitmap("ERASE", result, quality);
+                result.recycle();
+                call.resolve(describe(out));
+            } catch (Throwable t) {
+                call.reject(msg(t));
+            } finally {
+                if (src != null && !src.isRecycled()) src.recycle();
             }
         });
     }
