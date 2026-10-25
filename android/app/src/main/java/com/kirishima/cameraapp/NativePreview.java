@@ -223,6 +223,8 @@ final class NativePreview {
             applyZoom();
             applyControls();
             session.setRepeatingRequest(builder.build(), cb, h);
+            startMotion();
+            scheduleScan(400);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             stop();
@@ -296,6 +298,7 @@ final class NativePreview {
                 o.put("exposureCompensation", new org.json.JSONObject().put("min", ec.getLower() * st).put("max", ec.getUpper() * st).put("step", st));
             }
             Float minD = cc.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+            if (minD != null && minD > 0f) o.put("minFocusCm", Math.round(100.0 / minD));
             if (minD != null && minD > 0f) o.put("focusDistance", new org.json.JSONObject().put("min", 1.0 / minD).put("max", 10.0));
             Boolean fl = cc.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
             o.put("torch", fl != null && fl);
@@ -316,6 +319,7 @@ final class NativePreview {
             session.setRepeatingRequest(builder.build(), cb, h);
         } catch (Throwable ignored) {
         }
+        if (focusM <= 0f) scheduleScan(200);
     }
 
     private void applyControls() {
@@ -342,7 +346,8 @@ final class NativePreview {
             builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF);
             builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, dio);
         } else {
-            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            // 穩定模式:單次對焦後鎖住,不在近距離來回掃描(連續對焦在望遠近拍會一直跳動)
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
         }
     }
 
@@ -352,6 +357,62 @@ final class NativePreview {
         try {
             applyZoom();
             session.setRepeatingRequest(builder.build(), cb, h);
+        } catch (Throwable ignored) {
+        }
+        scheduleScan(700);
+    }
+
+    /** 單次對焦掃描(自動對焦模式下才有意義)。 */
+    void triggerScan() {
+        if (builder == null || session == null || focusMeters > 0f) return;
+        try {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
+            session.capture(builder.build(), cb, h);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
+            session.capture(builder.build(), cb, h);
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
+            session.setRepeatingRequest(builder.build(), cb, h);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void scheduleScan(long delayMs) {
+        if (h == null) return;
+        h.removeCallbacks(scanRun);
+        h.postDelayed(scanRun, delayMs);
+    }
+
+    private final Runnable scanRun = this::triggerScan;
+
+    // ---- 晃動偵測:手持移動後穩定下來才重新對焦一次
+    private android.hardware.SensorManager sm;
+    private android.hardware.SensorEventListener sl;
+    private volatile long lastMove = 0;
+    private volatile boolean moved = false;
+    private final float[] lp = new float[3];
+
+    private void startMotion() {
+        try {
+            sm = (android.hardware.SensorManager) act.getSystemService(Context.SENSOR_SERVICE);
+            android.hardware.Sensor acc = sm == null ? null : sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
+            if (acc == null) return;
+            sl = new android.hardware.SensorEventListener() {
+                @Override public void onSensorChanged(android.hardware.SensorEvent e) {
+                    float dx = e.values[0] - lp[0], dy = e.values[1] - lp[1], dz = e.values[2] - lp[2];
+                    for (int i = 0; i < 3; i++) lp[i] += 0.15f * (e.values[i] - lp[i]);
+                    if (dx * dx + dy * dy + dz * dz > 2.5f) { lastMove = android.os.SystemClock.uptimeMillis(); moved = true; }
+                }
+                @Override public void onAccuracyChanged(android.hardware.Sensor s, int a) { }
+            };
+            sm.registerListener(sl, acc, android.hardware.SensorManager.SENSOR_DELAY_GAME, h);
+            h.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (h == null || session == null) return;
+                    if (moved && android.os.SystemClock.uptimeMillis() - lastMove > 600) { moved = false; triggerScan(); }
+                    h.postDelayed(this, 250);
+                }
+            }, 250);
         } catch (Throwable ignored) {
         }
     }
@@ -391,20 +452,6 @@ final class NativePreview {
             session.capture(builder.build(), null, h);
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
             session.setRepeatingRequest(builder.build(), cb, h);
-            h.removeCallbacksAndMessages("release");
-            h.postAtTime(() -> {
-                try {
-                    if (builder == null || session == null) return;
-                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, null);
-                    builder.set(CaptureRequest.CONTROL_AE_REGIONS, null);
-                    builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                    builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
-                    session.capture(builder.build(), null, h);
-                    builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
-                    session.setRepeatingRequest(builder.build(), cb, h);
-                } catch (Throwable ignored) {
-                }
-            }, "release", android.os.SystemClock.uptimeMillis() + 5000);
         } catch (Throwable ignored) {
         }
     }
@@ -427,6 +474,8 @@ final class NativePreview {
     }
 
     void stop() {
+        try { if (sm != null && sl != null) sm.unregisterListener(sl); } catch (Throwable ignored) { }
+        try { if (h != null) h.removeCallbacksAndMessages(null); } catch (Throwable ignored) { }
         try { if (session != null) session.close(); } catch (Throwable ignored) { }
         try { if (cam != null) cam.close(); } catch (Throwable ignored) { }
         try { if (surface != null) surface.release(); } catch (Throwable ignored) { }

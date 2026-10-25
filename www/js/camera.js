@@ -199,6 +199,10 @@ async function startNativePrev(L) {
     S.caps = Object.assign({}, nc);
     if (nc.focusDistance) S.caps.focusMode = ['manual', 'continuous'];
     nativeManual();
+    if (nc.minFocusCm && nc.minFocusCm > 15 && S.nativeHintKey !== L.nativeId) {
+      S.nativeHintKey = L.nativeId;
+      A.toast('望遠最近對焦約 ' + nc.minFocusCm + ' cm,更近的物體請改用 1× 再數位放大', 4500);
+    }
   } catch (e) {
     document.documentElement.classList.remove('native-rec');
     throw e;
