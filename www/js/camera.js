@@ -270,6 +270,7 @@ async function applyBaseControls() {
 }
 
 function updateLensTag() {
+  if (A.refreshLensLock) A.refreshLensLock();
   const L = S.lens[S.lensKey];
   if (!L) { $('lensTag').textContent = '—'; return; }
   const eq = L.nativeId ? (L.native && L.native.equivMm) : L.dev.eq;
@@ -451,12 +452,17 @@ A.renderLensButtons = () => {
   });
   const lk = document.createElement('button');
   lk.className = 'lens-btn lock';
-  const lkLabel = () => { lk.textContent = A.settings.lensLock ? '🔒鎖定' : '🔓自動'; lk.classList.toggle('on', !!A.settings.lensLock); };
+  const lkLabel = () => {
+    const L = S.lens[S.lensKey];
+    lk.textContent = A.settings.lensLock ? '🔒' + (L ? L.ratio + '×鏡' : '鎖定') : '🔓自動';
+    lk.classList.toggle('on', !!A.settings.lensLock);
+  };
+  A.refreshLensLock = lkLabel;
   lkLabel();
   lk.onclick = () => {
     A.settings.lensLock = !A.settings.lensLock;
     A.saveSettings(); lkLabel();
-    if (A.settings.lensLock) A.toast('鏡頭已鎖定:變焦只做數位放大,不會自動換成望遠鏡頭(按 2× 也一樣)', 3500);
+    if (A.settings.lensLock) A.toast('已鎖定在目前鏡頭(' + ((S.lens[S.lensKey] || {}).ratio || 1) + '×鏡):變焦只做數位放大,不自動換鏡頭', 3500);
     else { A.toast('鏡頭自動切換', 1800); A.setZoom(S.Z, true); }
   };
   row.appendChild(lk);
