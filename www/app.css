@@ -226,3 +226,4 @@ html.native-rec #video { visibility: hidden; }
 #lensTag { display: none !important; }
 
 .bg-badge { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 6; padding: 4px 10px; border-radius: 12px; background: rgba(0,0,0,.6); color: var(--accent); font: 600 11px var(--mono); max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.lens-btn.lock { font-size: 11px; } .lens-btn.lock.on { background: var(--accent-bg); color: var(--accent); }

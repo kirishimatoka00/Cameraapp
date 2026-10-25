@@ -416,7 +416,7 @@ A.setZoom = async (Z, allowSwitch) => {
   Z = clamp(Z, minZoom(), MAX_ZOOM);
   S.Z = Z;
   if (allowSwitch && !S.switching && !A.busy && !S.recording) {
-    const key = chooseLens(Z);
+    const key = (A.settings.lensLock && S.lensKey && S.lens[S.lensKey]) ? S.lensKey : chooseLens(Z);   // 鎖定時不自動換鏡頭
     if (key && key !== S.lensKey) {
       S.switching = true;
       const cur = S.lens[S.lensKey];
@@ -449,6 +449,17 @@ A.renderLensButtons = () => {
     b.onclick = () => A.setZoom(p, true);
     row.appendChild(b);
   });
+  const lk = document.createElement('button');
+  lk.className = 'lens-btn lock';
+  const lkLabel = () => { lk.textContent = A.settings.lensLock ? '🔒鎖定' : '🔓自動'; lk.classList.toggle('on', !!A.settings.lensLock); };
+  lkLabel();
+  lk.onclick = () => {
+    A.settings.lensLock = !A.settings.lensLock;
+    A.saveSettings(); lkLabel();
+    if (A.settings.lensLock) A.toast('鏡頭已鎖定:變焦只做數位放大,不會自動換成望遠鏡頭(按 2× 也一樣)', 3500);
+    else { A.toast('鏡頭自動切換', 1800); A.setZoom(S.Z, true); }
+  };
+  row.appendChild(lk);
   A.applyPreviewZoom();
 };
 A.minZoom = minZoom;

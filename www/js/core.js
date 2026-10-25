@@ -65,6 +65,7 @@ A.DEFAULTS = {
   rawOn: false,
   selfieMirror: true,
   zoomOutMp: 9,
+  lensLock: false,
   nativePreview: true,
   enhProfiles: [],       // 自訂畫質設定檔 [{id,name,enh}]
   enhCap: null,          // 拍攝選單的畫質提升 {on,id,enh}
