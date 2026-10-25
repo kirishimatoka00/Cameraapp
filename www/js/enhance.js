@@ -268,28 +268,37 @@ A.denoiseRGBA = (data, w, h, luma, chroma) => {
     }
   }
   if (luma > 0) {
-    const yb = new Uint8Array(n);
-    for (let i = 0, j = 0; i < n; i++, j += 4) yb[i] = Math.round(0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2]);
-    const sigR = 4 + luma / 100 * 30;
-    const lut = new Float32Array(256);
-    for (let d = 0; d < 256; d++) lut[d] = Math.exp(-(d * d) / (2 * sigR * sigR));
-    const R = 2, sw = [];
-    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) sw.push(Math.exp(-(dx * dx + dy * dy) / (2 * 1.3 * 1.3)));
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x, c0 = yb[i];
-      let sum = 0, ws = 0, q = 0;
-      for (let dy = -R; dy <= R; dy++) {
-        const yy = Math.min(h - 1, Math.max(0, y + dy));
-        for (let dx = -R; dx <= R; dx++, q++) {
-          const xx = Math.min(w - 1, Math.max(0, x + dx)), v = yb[yy * w + xx];
-          const wt = sw[q] * lut[Math.abs(v - c0)];
-          sum += wt * v; ws += wt;
+    const yb0 = new Uint8Array(n);
+    for (let i = 0, j = 0; i < n; i++, j += 4) yb0[i] = Math.round(0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2]);
+    const R = n >= 6e6 ? 3 : 2, sigS = R === 3 ? 2.0 : 1.4, passes = luma > 55 ? 2 : 1;
+    const sw = [];
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) sw.push(Math.exp(-(dx * dx + dy * dy) / (2 * sigS * sigS)));
+    let cur = yb0;
+    for (let pass = 0; pass < passes; pass++) {
+      const sigR = (5 + luma / 100 * 55) * (pass === 0 ? 1 : 0.7);
+      const lut = new Float32Array(256);
+      for (let d = 0; d < 256; d++) lut[d] = Math.exp(-(d * d) / (2 * sigR * sigR));
+      const dst = new Uint8Array(n);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = y * w + x, c0 = cur[i];
+        let sum = 0, ws = 0, q = 0;
+        for (let dy = -R; dy <= R; dy++) {
+          const yy = Math.min(h - 1, Math.max(0, y + dy));
+          for (let dx = -R; dx <= R; dx++, q++) {
+            const xx = Math.min(w - 1, Math.max(0, x + dx)), v = cur[yy * w + xx];
+            const wt = sw[q] * lut[Math.abs(v - c0)];
+            sum += wt * v; ws += wt;
+          }
         }
+        dst[i] = Math.round(sum / ws);
       }
-      const d = sum / ws - c0, j = i * 4;
-      data[j] = A.clamp(Math.round(data[j] + d), 0, 255);
-      data[j + 1] = A.clamp(Math.round(data[j + 1] + d), 0, 255);
-      data[j + 2] = A.clamp(Math.round(data[j + 2] + d), 0, 255);
+      cur = dst;
+    }
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      const d = cur[i] - yb0[i];
+      data[j] = A.clamp(data[j] + d, 0, 255);
+      data[j + 1] = A.clamp(data[j + 1] + d, 0, 255);
+      data[j + 2] = A.clamp(data[j + 2] + d, 0, 255);
     }
   }
 };

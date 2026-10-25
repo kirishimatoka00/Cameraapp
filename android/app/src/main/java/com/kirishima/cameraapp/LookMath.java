@@ -224,38 +224,52 @@ final class LookMath {
                 int c = px[i];
                 yb[i] = (byte) Math.round(0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255));
             }
-            final float sigR = 4f + luma / 100f * 30f;
-            final float[] lut = new float[256];
-            for (int d = 0; d < 256; d++) lut[d] = (float) Math.exp(-(d * d) / (2.0 * sigR * sigR));
-            final int R = 2;
+            // 手機雜訊多為數像素大的斑塊,需要較大視窗與較寬的亮度容忍度;強度高時做兩輪
+            final int R = (long) n >= 6_000_000L ? 3 : 2;
+            final float sigS = R == 3 ? 2.0f : 1.4f;
+            final int passes = luma > 55f ? 2 : 1;
             final float[] sw = new float[(2 * R + 1) * (2 * R + 1)];
             for (int dy = -R; dy <= R; dy++) for (int dx = -R; dx <= R; dx++)
-                sw[(dy + R) * (2 * R + 1) + dx + R] = (float) Math.exp(-(dx * dx + dy * dy) / (2.0 * 1.3 * 1.3));
-            final int[] out = new int[n];
+                sw[(dy + R) * (2 * R + 1) + dx + R] = (float) Math.exp(-(dx * dx + dy * dy) / (2.0 * sigS * sigS));
+            byte[] cur = yb;
+            for (int pass = 0; pass < passes; pass++) {
+                final byte[] src = cur;
+                final float sigR = (5f + luma / 100f * 55f) * (pass == 0 ? 1f : 0.7f);
+                final float[] lut = new float[256];
+                for (int d = 0; d < 256; d++) lut[d] = (float) Math.exp(-(d * d) / (2.0 * sigR * sigR));
+                final byte[] dst = new byte[n];
+                java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
+                    for (int x = 0; x < w; x++) {
+                        int i = y * w + x;
+                        int c0 = src[i] & 255;
+                        float sum = 0f, ws = 0f;
+                        for (int dy = -R; dy <= R; dy++) {
+                            int yy = Math.min(h - 1, Math.max(0, y + dy));
+                            for (int dx = -R; dx <= R; dx++) {
+                                int xx = Math.min(w - 1, Math.max(0, x + dx));
+                                int v = src[yy * w + xx] & 255;
+                                float wt = sw[(dy + R) * (2 * R + 1) + dx + R] * lut[Math.abs(v - c0)];
+                                sum += wt * v;
+                                ws += wt;
+                            }
+                        }
+                        dst[i] = (byte) Math.round(sum / ws);
+                    }
+                });
+                cur = dst;
+            }
+            final byte[] fin = cur;
             java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
                 for (int x = 0; x < w; x++) {
                     int i = y * w + x;
-                    int c0 = yb[i] & 255;
-                    float sum = 0f, ws = 0f;
-                    for (int dy = -R; dy <= R; dy++) {
-                        int yy = Math.min(h - 1, Math.max(0, y + dy));
-                        for (int dx = -R; dx <= R; dx++) {
-                            int xx = Math.min(w - 1, Math.max(0, x + dx));
-                            int v = yb[yy * w + xx] & 255;
-                            float wt = sw[(dy + R) * (2 * R + 1) + dx + R] * lut[Math.abs(v - c0)];
-                            sum += wt * v;
-                            ws += wt;
-                        }
-                    }
-                    float d = sum / ws - c0;
+                    int d = (fin[i] & 255) - (yb[i] & 255);
                     int c = px[i];
-                    int r = Math.min(255, Math.max(0, Math.round(((c >> 16) & 255) + d)));
-                    int g = Math.min(255, Math.max(0, Math.round(((c >> 8) & 255) + d)));
-                    int b = Math.min(255, Math.max(0, Math.round((c & 255) + d)));
-                    out[i] = (c & 0xFF000000) | (r << 16) | (g << 8) | b;
+                    int r = Math.min(255, Math.max(0, ((c >> 16) & 255) + d));
+                    int g = Math.min(255, Math.max(0, ((c >> 8) & 255) + d));
+                    int b2 = Math.min(255, Math.max(0, (c & 255) + d));
+                    px[i] = (c & 0xFF000000) | (r << 16) | (g << 8) | b2;
                 }
             });
-            System.arraycopy(out, 0, px, 0, n);
         }
     }
 
