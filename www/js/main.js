@@ -28,7 +28,7 @@ async function init() {
 }
 
 /* 檢視/編輯相片時關閉鏡頭,回到相機時再開 */
-const camOverlays = ['gallery', 'viewer', 'editor'].map((id) => A.$(id));
+const camOverlays = ['gallery', 'viewer', 'editor', 'settings'].map((id) => A.$(id));
 const anyViewOpen = () => camOverlays.some((el) => el && !el.hidden);
 async function camPause() {
   if (S.recording || A.busy) return;
