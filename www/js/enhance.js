@@ -124,7 +124,7 @@ A.buildEnhPanel = (container, st, opts) => {
   if (opts.showHal !== false) {
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = '<span class="n" style="width:78px">機身降噪</span><select class="txt" style="flex:1"><option value="0">關(原始)</option><option value="1">快速</option><option value="2">高品質(硬體,最有效)</option></select>';
+    row.innerHTML = '<span class="n" style="width:78px">機身降噪</span><select class="txt" style="flex:1"><option value="0">關(原始)</option><option value="3">最小(關與快速之間)</option><option value="1">快速</option><option value="2">高品質(最強,易抹細節)</option></select>';
     halSel = row.querySelector('select');
     halSel.onchange = () => { st.enh.hal = parseInt(halSel.value, 10); changed(); renderChips(); };
     body.appendChild(row);

@@ -530,8 +530,14 @@ final class NativeShot {
             b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF);
         {
             int[] modes = cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES);
-            int want = req.halNr >= 2 ? CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                    : req.halNr == 1 ? CameraMetadata.NOISE_REDUCTION_MODE_FAST : CameraMetadata.NOISE_REDUCTION_MODE_OFF;
+            // 0 關、3 最小(介於關與快速之間)、1 快速、2 高品質
+            int want = req.halNr == 2 ? CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                    : req.halNr == 1 ? CameraMetadata.NOISE_REDUCTION_MODE_FAST
+                    : req.halNr == 3 ? CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL : CameraMetadata.NOISE_REDUCTION_MODE_OFF;
+            if (req.halNr == 3 && !has(modes, want)) {
+                want = CameraMetadata.NOISE_REDUCTION_MODE_FAST;
+                if (res.notes.indexOf("最小") < 0) res.notes.append("此鏡頭沒有「最小」機身降噪,改用快速;");
+            }
             if (has(modes, want)) b.set(CaptureRequest.NOISE_REDUCTION_MODE, want);
         }
         if (has(cc.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES), CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY))
