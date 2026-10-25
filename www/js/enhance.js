@@ -17,8 +17,8 @@ A.ENH_BUILTIN = [
   { id: 'off', name: '無', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, sharp: 0 } },
   { id: 'std', name: '標準', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 20, dnC: 35, sharp: 30, hal: 1 } },
   { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: false, nnMix: 40, dnL: 15, dnC: 35, sharp: 40, hal: 1 } },
-  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 45, dnC: 70, dnS: 70, sharp: 25, hal: 2 } },
-  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35, hal: 2 } },
+  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 45, dnC: 70, dnS: 70, sharp: 25, hal: 1 } },
+  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35, hal: 1 } },
 ];
 A.allEnhProfiles = () => A.ENH_BUILTIN.concat(A.settings.enhProfiles || []);
 A.findEnhProfile = (id) => A.allEnhProfiles().find((p) => p.id === id) || null;
@@ -30,10 +30,16 @@ A.ensureEnhState = () => {
     ['enhCap', 'enhSet'].forEach((k) => { if (st[k] && st[k].enh) { st[k].enh.nn = false; st[k].enh.nnMix = 40; } });
     st.enhV = 2;
   }
+  if (st.enhV < 4) {   // v4:移除「高品質」機身降噪(過度抹細節),原本選高品質的改為快速
+    [st.enhCap, st.enhSet].forEach((x) => { if (x && x.enh && x.enh.hal === 2) x.enh.hal = 1; });
+    (st.enhProfiles || []).forEach((p) => { if (p.enh && p.enh.hal === 2) p.enh.hal = 1; });
+    st.enhV = Math.max(st.enhV, 3);
+  }
   if (st.enhV < 3) {       // v3:新增機身降噪(硬體),拍攝預設改用高品質
     if (st.enhCap && st.enhCap.enh && st.enhCap.enh.hal === undefined) st.enhCap.enh.hal = 2;
     st.enhV = 3;
   }
+  if (st.enhV < 4) st.enhV = 4;
   if (!Array.isArray(st.enhProfiles)) st.enhProfiles = [];
   [['enhCap', true, 'detail'], ['enhSet', false, 'std']].forEach(([k, on, id]) => {
     let s = st[k];
@@ -124,7 +130,7 @@ A.buildEnhPanel = (container, st, opts) => {
   if (opts.showHal !== false) {
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = '<span class="n" style="width:78px">機身降噪</span><select class="txt" style="flex:1"><option value="0">關(原始)</option><option value="3">最小(關與快速之間)</option><option value="1">快速</option><option value="2">高品質(最強,易抹細節)</option></select>';
+    row.innerHTML = '<span class="n" style="width:78px">機身降噪</span><select class="txt" style="flex:1"><option value="0">關(原始)</option><option value="4">微弱(關/最小交替,需連拍)</option><option value="3">最小</option><option value="1">快速(最強)</option></select>';
     halSel = row.querySelector('select');
     halSel.onchange = () => { st.enh.hal = parseInt(halSel.value, 10); changed(); renderChips(); };
     body.appendChild(row);
@@ -326,6 +332,44 @@ A.denoiseRGBA = (data, w, h, luma, chroma, shadow) => {
       data[j] = A.clamp(data[j] + d, 0, 255);
       data[j + 1] = A.clamp(data[j + 1] + d, 0, 255);
       data[j + 2] = A.clamp(data[j + 2] + d, 0, 255);
+    }
+  }
+};
+
+/** 不放大雜訊的銳化(與原生版同概念):去雜訊門檻 + 邊緣遮罩 + 限幅。就地修改 RGBA。 */
+A.sharpenRGBA = (data, w, h, sharp) => {
+  if (sharp <= 0) return;
+  const n = w * h, orig = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) orig[i] = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
+  let y = orig.slice(), t = new Float32Array(n);
+  const radius = 1;
+  const pre = new Float64Array(Math.max(w, h) + 1);
+  for (let k = 0; k < 2; k++) {
+    for (let r = 0; r < h; r++) {
+      const b = r * w; pre[0] = 0;
+      for (let x = 0; x < w; x++) pre[x + 1] = pre[x] + y[b + x];
+      for (let x = 0; x < w; x++) { const lo = Math.max(0, x - radius), hi = Math.min(w, x + radius + 1); t[b + x] = (pre[hi] - pre[lo]) / (hi - lo); }
+    }
+    for (let x = 0; x < w; x++) {
+      pre[0] = 0;
+      for (let r = 0; r < h; r++) pre[r + 1] = pre[r] + t[r * w + x];
+      for (let r = 0; r < h; r++) { const lo = Math.max(0, r - radius), hi = Math.min(h, r + radius + 1); y[r * w + x] = (pre[hi] - pre[lo]) / (hi - lo); }
+    }
+  }
+  const amount = sharp / 100 * 3.0, core = 2 + 2 * sharp / 100;
+  for (let r = 0; r < h; r++) {
+    const yu = Math.max(0, r - 2), yd = Math.min(h - 1, r + 2);
+    for (let x = 0; x < w; x++) {
+      const i = r * w + x, xl = Math.max(0, x - 2), xr = Math.min(w - 1, x + 2);
+      const g = Math.abs(y[r * w + xr] - y[r * w + xl]) + Math.abs(y[yd * w + x] - y[yu * w + x]);
+      const m = Math.max(0, Math.min(1, (g - 3) / 20));
+      const d = orig[i] - y[i];
+      const dc = d > core ? d - core : (d < -core ? d + core : 0);
+      const delta = Math.max(-50, Math.min(50, amount * (0.15 + 0.85 * m) * dc));
+      const j = i * 4;
+      data[j] = A.clamp(Math.round(data[j] + delta), 0, 255);
+      data[j + 1] = A.clamp(Math.round(data[j + 1] + delta), 0, 255);
+      data[j + 2] = A.clamp(Math.round(data[j + 2] + delta), 0, 255);
     }
   }
 };

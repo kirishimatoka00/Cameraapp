@@ -297,6 +297,15 @@ final class NativeShot {
             sb.set(CaptureRequest.JPEG_ORIENTATION, orient);
             sb.set(CaptureRequest.JPEG_QUALITY, (byte) Math.max(95, req.jpegQuality));
             final CaptureRequest stillReq = sb.build();
+            CaptureRequest stillReq2 = stillReq;
+            if (req.halNr == 4 && cc != null) {   // 微弱:關與最小交替,連拍合成後等於約一半強度
+                int[] nrm = cc.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES);
+                if (has(nrm, CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL)) {
+                    sb.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_MINIMAL);
+                    stillReq2 = sb.build();
+                } else if (res.notes.indexOf("最小") < 0) res.notes.append("此鏡頭沒有「最小」機身降噪,「微弱」等同關;");
+            }
+            final CaptureRequest altReq = stillReq2;
             final CameraCaptureSession.CaptureCallback stillCb = new CameraCaptureSession.CaptureCallback() {
                 @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult tr) {
                     stillResult = tr;
@@ -314,7 +323,7 @@ final class NativeShot {
                     gotJpeg = new CountDownLatch(1);
                     gotResult = new CountDownLatch(1);
                 }
-                session.capture(stillReq, stillCb, h);
+                session.capture((req.halNr == 4 && (k % 2) == 1) ? altReq : stillReq, stillCb, h);
                 long cap = 10_000L + (manualExp ? req.exposureNs / 1_000_000L * 2 : 0);
                 if (!gotResult.await(cap, TimeUnit.MILLISECONDS)) throw new IOException("等待拍攝結果逾時");
                 check();

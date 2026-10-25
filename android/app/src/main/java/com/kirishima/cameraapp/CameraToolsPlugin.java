@@ -768,7 +768,7 @@ public class CameraToolsPlugin extends Plugin {
         r.jpegQuality = q == null ? 95 : q;
         r.torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
         r.burst = Math.max(1, Math.min(8, call.getInt("burst", 1)));
-        r.halNr = Math.max(0, Math.min(3, call.getInt("halNr", 0)));
+        r.halNr = Math.max(0, Math.min(4, call.getInt("halNr", 0)));
         Double zz = call.getDouble("zoom", 1.0);
         r.zoom = zz == null ? 1f : zz.floatValue();
         Double fu = call.getDouble("focusU", -1.0), fv = call.getDouble("focusV", -1.0);

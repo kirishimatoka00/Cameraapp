@@ -366,9 +366,48 @@ final class LookMath {
         return out;
     }
 
-    /** 銳利度 0..100 → unsharp(僅亮度) */
+    /**
+     * 銳利度 0..100:不放大雜訊的銳化。
+     * - 只取「超過雜訊門檻」的細節(coring),門檻以下的細小起伏視為雜訊不增強;
+     * - 以邊緣強度做遮罩,平坦區(雜訊最顯眼處)幾乎不銳化,邊緣與紋理才加強;
+     * - 增強量限幅避免白邊/黑邊。
+     */
     static void sharpen(int[] px, int w, int h, float sharp) {
         if (sharp <= 0f) return;
-        unsharp(px, w, h, sharp / 100f * 2.2f, Math.max(1, Math.round(Math.max(w, h) / 3000f)));
+        final int n = w * h;
+        final int radius = Math.max(1, Math.round(Math.max(w, h) / 3000f));
+        float[] y = new float[n], t = new float[n];
+        for (int i = 0; i < n; i++) {
+            int c = px[i];
+            y[i] = 0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255);
+        }
+        final float[] orig = y.clone();
+        double[] pre = new double[Math.max(w, h) + 1];
+        float[] col = new float[w];
+        for (int k = 0; k < 2; k++) {
+            boxH(y, t, w, h, radius, pre);
+            boxV(t, y, w, h, radius, col);
+        }
+        final float amount = sharp / 100f * 3.0f;
+        final float core = 2.0f + 2.0f * sharp / 100f;
+        final float[] blur = y;
+        java.util.stream.IntStream.range(0, h).parallel().forEach(yy -> {
+            int yu = Math.max(0, yy - 2), yd = Math.min(h - 1, yy + 2);
+            for (int x = 0; x < w; x++) {
+                int i = yy * w + x;
+                int xl = Math.max(0, x - 2), xr = Math.min(w - 1, x + 2);
+                float g = Math.abs(blur[yy * w + xr] - blur[yy * w + xl]) + Math.abs(blur[yd * w + x] - blur[yu * w + x]);
+                float m = Math.max(0f, Math.min(1f, (g - 3f) / 20f));
+                float d = orig[i] - blur[i];
+                float dc = d > core ? d - core : (d < -core ? d + core : 0f);
+                float delta = amount * (0.15f + 0.85f * m) * dc;
+                if (delta > 50f) delta = 50f; else if (delta < -50f) delta = -50f;
+                int c = px[i];
+                int r = Math.min(255, Math.max(0, Math.round(((c >> 16) & 255) + delta)));
+                int gg = Math.min(255, Math.max(0, Math.round(((c >> 8) & 255) + delta)));
+                int bb = Math.min(255, Math.max(0, Math.round((c & 255) + delta)));
+                px[i] = (c & 0xFF000000) | (r << 16) | (gg << 8) | bb;
+            }
+        });
     }
 }
