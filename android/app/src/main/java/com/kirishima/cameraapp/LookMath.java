@@ -165,9 +165,18 @@ final class LookMath {
     }
 
     /** 降噪:luma/chroma 0..100。亮度用雙邊濾波(保邊),色彩用低解析度模糊後回填。 */
-    static void denoise(int[] px, int w, int h, float luma, float chroma) {
+    static void denoise(int[] px, int w, int h, float luma, float chroma) { denoise(px, w, h, luma, chroma, 0f); }
+
+    /** 暗部權重:亮度 <96 的區域才有,越暗越大(手機雜訊集中在暗部,且與訊號大小有關) */
+    static float darkness(float y) {
+        float t = 1f - y / 96f;
+        return t <= 0f ? 0f : t * (float) Math.sqrt(t);
+    }
+
+    /** shadow:額外針對暗部加強的降噪強度 0..100(亮度與色彩一起加強)。 */
+    static void denoise(int[] px, int w, int h, float luma, float chroma, final float shadow) {
         final int n = w * h;
-        if (chroma > 0f) {
+        if (chroma > 0f || shadow > 0f) {
             final int cw = (w + 3) / 4, ch = (h + 3) / 4;
             float[] cb = new float[cw * ch], cr = new float[cw * ch], cnt = new float[cw * ch];
             for (int y = 0; y < h; y++) {
@@ -182,7 +191,7 @@ final class LookMath {
                 }
             }
             for (int i = 0; i < cb.length; i++) { cb[i] /= cnt[i]; cr[i] /= cnt[i]; }
-            int rad = 1 + Math.round(chroma / 100f * 5f);
+            int rad = 1 + Math.round(Math.max(chroma, shadow) / 100f * 5f);
             float[] t = new float[cw * ch];
             double[] pre = new double[Math.max(cw, ch) + 1];
             float[] col = new float[cw];
@@ -190,7 +199,7 @@ final class LookMath {
                 boxH(cb, t, cw, ch, rad, pre); boxV(t, cb, cw, ch, rad, col);
                 boxH(cr, t, cw, ch, rad, pre); boxV(t, cr, cw, ch, rad, col);
             }
-            final float a = Math.min(1f, chroma / 100f);
+            final float a0 = Math.min(1f, chroma / 100f);
             final float[] fcb = cb, fcr = cr;
             final int fcw = cw, fch = ch;
             java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
@@ -210,6 +219,7 @@ final class LookMath {
                     float yy = 0.299f * r + 0.587f * g + 0.114f * b;
                     float ocb = -0.168736f * r - 0.331264f * g + 0.5f * b;
                     float ocr = 0.5f * r - 0.418688f * g - 0.081312f * b;
+                    float a = Math.min(1f, a0 + shadow / 100f * darkness(yy));
                     float ncb = ocb + (bcb - ocb) * a, ncr = ocr + (bcr - ocr) * a;
                     int nr = Math.min(255, Math.max(0, Math.round(yy + 1.402f * ncr)));
                     int ng = Math.min(255, Math.max(0, Math.round(yy - 0.344136f * ncb - 0.714136f * ncr)));
@@ -218,7 +228,7 @@ final class LookMath {
                 }
             });
         }
-        if (luma > 0f) {
+        if (luma > 0f || shadow > 0f) {
             final byte[] yb = new byte[n];
             for (int i = 0; i < n; i++) {
                 int c = px[i];
@@ -227,28 +237,35 @@ final class LookMath {
             // 手機雜訊多為數像素大的斑塊,需要較大視窗與較寬的亮度容忍度;強度高時做兩輪
             final int R = (long) n >= 6_000_000L ? 3 : 2;
             final float sigS = R == 3 ? 2.0f : 1.4f;
-            final int passes = luma > 55f ? 2 : 1;
+            final int passes = (luma + shadow) > 55f ? 2 : 1;
             final float[] sw = new float[(2 * R + 1) * (2 * R + 1)];
             for (int dy = -R; dy <= R; dy++) for (int dx = -R; dx <= R; dx++)
                 sw[(dy + R) * (2 * R + 1) + dx + R] = (float) Math.exp(-(dx * dx + dy * dy) / (2.0 * sigS * sigS));
             byte[] cur = yb;
             for (int pass = 0; pass < passes; pass++) {
                 final byte[] src = cur;
-                final float sigR = (5f + luma / 100f * 55f) * (pass == 0 ? 1f : 0.7f);
-                final float[] lut = new float[256];
-                for (int d = 0; d < 256; d++) lut[d] = (float) Math.exp(-(d * d) / (2.0 * sigR * sigR));
+                final float pf = pass == 0 ? 1f : 0.7f;
+                final float[] lut = new float[256 * 256];     // [中心亮度][亮度差];暗處的容忍度更大
+                final boolean[] skip = new boolean[256];
+                for (int yv = 0; yv < 256; yv++) {
+                    float eff = Math.min(100f, luma + shadow * darkness(yv));
+                    skip[yv] = eff < 0.5f;
+                    float sg = (5f + eff / 100f * 55f) * pf;
+                    for (int d = 0; d < 256; d++) lut[(yv << 8) + d] = (float) Math.exp(-(d * d) / (2.0 * sg * sg));
+                }
                 final byte[] dst = new byte[n];
                 java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
                     for (int x = 0; x < w; x++) {
                         int i = y * w + x;
                         int c0 = src[i] & 255;
+                        if (skip[c0]) { dst[i] = (byte) c0; continue; }
                         float sum = 0f, ws = 0f;
                         for (int dy = -R; dy <= R; dy++) {
                             int yy = Math.min(h - 1, Math.max(0, y + dy));
                             for (int dx = -R; dx <= R; dx++) {
                                 int xx = Math.min(w - 1, Math.max(0, x + dx));
                                 int v = src[yy * w + xx] & 255;
-                                float wt = sw[(dy + R) * (2 * R + 1) + dx + R] * lut[Math.abs(v - c0)];
+                                float wt = sw[(dy + R) * (2 * R + 1) + dx + R] * lut[(c0 << 8) + Math.abs(v - c0)];
                                 sum += wt * v;
                                 ws += wt;
                             }

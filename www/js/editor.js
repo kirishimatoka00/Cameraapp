@@ -57,8 +57,8 @@ const enhNow = () => A.enhEff(E.enhSt);
 /** 降噪後的底圖(有快取;參數變動時延遲重算,預覽為近似效果) */
 function dnBase() {
   const en = enhNow();
-  if (!(en.dnL > 0 || en.dnC > 0)) return E.base;
-  const key = en.dnL + '|' + en.dnC;
+  if (!(en.dnL > 0 || en.dnC > 0 || en.dnS > 0)) return E.base;
+  const key = en.dnL + '|' + en.dnC + '|' + en.dnS;
   if (E.dn && E.dnKey === key) return E.dn;
   return E.dn || E.base;
 }
@@ -67,11 +67,11 @@ function scheduleDn() {
   E.dnTimer = setTimeout(() => {
     if (!E.base) return;
     const en = enhNow();
-    if (en.dnL > 0 || en.dnC > 0) {
-      const key = en.dnL + '|' + en.dnC;
+    if (en.dnL > 0 || en.dnC > 0 || en.dnS > 0) {
+      const key = en.dnL + '|' + en.dnC + '|' + en.dnS;
       if (E.dnKey !== key) {
         const d = new ImageData(new Uint8ClampedArray(E.base.data), E.w, E.h);
-        A.denoiseRGBA(d.data, E.w, E.h, en.dnL, en.dnC);
+        A.denoiseRGBA(d.data, E.w, E.h, en.dnL, en.dnC, en.dnS);
         E.dn = d; E.dnKey = key;
       }
     }

@@ -4,8 +4,8 @@
 const A = window.A;
 const $ = A.$;
 
-const KEYS = ['burst', 'nn', 'nnMix', 'dnL', 'dnC', 'sharp'];
-A.enhZero = () => ({ burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, sharp: 0 });
+const KEYS = ['burst', 'nn', 'nnMix', 'dnL', 'dnC', 'dnS', 'sharp'];
+A.enhZero = () => ({ burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, dnS: 0, sharp: 0 });
 A.cloneEnh = (e) => {
   const z = A.enhZero();
   const o = {};
@@ -17,7 +17,7 @@ A.ENH_BUILTIN = [
   { id: 'off', name: '無', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, sharp: 0 } },
   { id: 'std', name: '標準', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 20, dnC: 35, sharp: 30 } },
   { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: false, nnMix: 40, dnL: 15, dnC: 35, sharp: 40 } },
-  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 55, dnC: 70, sharp: 25 } },
+  { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 45, dnC: 70, dnS: 70, sharp: 25 } },
   { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35 } },
 ];
 A.allEnhProfiles = () => A.ENH_BUILTIN.concat(A.settings.enhProfiles || []);
@@ -45,9 +45,9 @@ A.ensureEnhState();
 
 /** 實際生效的設定(未啟用 = 全部關閉) */
 A.enhEff = (s) => (s && s.on ? A.cloneEnh(s.enh) : A.enhZero());
-A.enhActive = (e) => e.burst > 1 || e.nn || e.dnL > 0 || e.dnC > 0 || e.sharp > 0;
+A.enhActive = (e) => e.burst > 1 || e.nn || e.dnL > 0 || e.dnC > 0 || e.dnS > 0 || e.sharp > 0;
 /** 轉成原生外掛參數 */
-A.enhArgs = (e) => ({ nn: !!e.nn, nnMix: e.nnMix / 100, dnLuma: e.dnL, dnChroma: e.dnC, sharpen: e.sharp });
+A.enhArgs = (e) => ({ nn: !!e.nn, nnMix: e.nnMix / 100, dnLuma: e.dnL, dnChroma: e.dnC, dnShadow: e.dnS, sharpen: e.sharp });
 A.enhSame = (a, b) => JSON.stringify(A.cloneEnh(a)) === JSON.stringify(A.cloneEnh(b));
 
 A.saveEnhProfile = (name, enh) => {
@@ -119,6 +119,7 @@ A.buildEnhPanel = (container, st, opts) => {
   }
   addSlider('dnL', '亮度降噪', 100);
   addSlider('dnC', '色彩降噪', 100);
+  addSlider('dnS', '暗部降噪', 100);
   addSlider('sharp', '銳利度', 100);
 
   const btns = document.createElement('div');
@@ -173,7 +174,7 @@ A.buildEnhPanel = (container, st, opts) => {
     onBox.checked = !!st.on;
     if (burstSel) burstSel.value = String(st.enh.burst);
     if (nnBox) { nnBox.checked = !!st.enh.nn; rows.nnMix.row.style.display = st.enh.nn ? 'flex' : 'none'; }
-    ['nnMix', 'dnL', 'dnC', 'sharp'].forEach((k) => {
+    ['nnMix', 'dnL', 'dnC', 'dnS', 'sharp'].forEach((k) => {
       const r = rows[k];
       if (!r) return;
       r.inp.value = st.enh[k];
@@ -221,9 +222,11 @@ A.initEnhUI = () => {
 /* ------------------------------------------------------------------ 預覽用降噪(修圖頁) */
 
 /** 與原生版相同概念的預覽實作:色彩低解析度模糊 + 亮度雙邊濾波。就地修改 RGBA data。 */
-A.denoiseRGBA = (data, w, h, luma, chroma) => {
+A.denoiseRGBA = (data, w, h, luma, chroma, shadow) => {
+  shadow = shadow || 0;
   const n = w * h;
-  if (chroma > 0) {
+  const dark = (y) => { const t = 1 - y / 96; return t <= 0 ? 0 : t * Math.sqrt(t); };
+  if (chroma > 0 || shadow > 0) {
     const cw = Math.ceil(w / 4), ch = Math.ceil(h / 4);
     let cb = new Float32Array(cw * ch), cr = new Float32Array(cw * ch);
     const cnt = new Float32Array(cw * ch);
@@ -235,7 +238,7 @@ A.denoiseRGBA = (data, w, h, luma, chroma) => {
       cnt[k]++;
     }
     for (let i = 0; i < cb.length; i++) { cb[i] /= cnt[i]; cr[i] /= cnt[i]; }
-    const rad = 1 + Math.round(chroma / 100 * 5);
+    const rad = 1 + Math.round(Math.max(chroma, shadow) / 100 * 5);
     const blur = (src) => {
       let t = new Float32Array(src.length), d = new Float32Array(src.length);
       for (let pass = 0; pass < 2; pass++) {
@@ -254,7 +257,7 @@ A.denoiseRGBA = (data, w, h, luma, chroma) => {
       return src;
     };
     cb = blur(cb); cr = blur(cr);
-    const a = Math.min(1, chroma / 100);
+    const a0 = Math.min(1, chroma / 100);
     for (let y = 0; y < h; y++) {
       const fy = A.clamp((y + 0.5) / 4 - 0.5, 0, ch - 1), y0 = fy | 0, y1 = Math.min(ch - 1, y0 + 1), wy = fy - y0;
       for (let x = 0; x < w; x++) {
@@ -264,6 +267,7 @@ A.denoiseRGBA = (data, w, h, luma, chroma) => {
         const r = data[j], g = data[j + 1], b = data[j + 2];
         const yy = 0.299 * r + 0.587 * g + 0.114 * b;
         const ocb = -0.168736 * r - 0.331264 * g + 0.5 * b, ocr = 0.5 * r - 0.418688 * g - 0.081312 * b;
+        const a = Math.min(1, a0 + shadow / 100 * dark(yy));
         const ncb = ocb + (s(cb) - ocb) * a, ncr = ocr + (s(cr) - ocr) * a;
         data[j] = A.clamp(Math.round(yy + 1.402 * ncr), 0, 255);
         data[j + 1] = A.clamp(Math.round(yy - 0.344136 * ncb - 0.714136 * ncr), 0, 255);
@@ -271,26 +275,32 @@ A.denoiseRGBA = (data, w, h, luma, chroma) => {
       }
     }
   }
-  if (luma > 0) {
+  if (luma > 0 || shadow > 0) {
     const yb0 = new Uint8Array(n);
     for (let i = 0, j = 0; i < n; i++, j += 4) yb0[i] = Math.round(0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2]);
-    const R = n >= 6e6 ? 3 : 2, sigS = R === 3 ? 2.0 : 1.4, passes = luma > 55 ? 2 : 1;
+    const R = n >= 6e6 ? 3 : 2, sigS = R === 3 ? 2.0 : 1.4, passes = (luma + shadow) > 55 ? 2 : 1;
     const sw = [];
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) sw.push(Math.exp(-(dx * dx + dy * dy) / (2 * sigS * sigS)));
     let cur = yb0;
     for (let pass = 0; pass < passes; pass++) {
-      const sigR = (5 + luma / 100 * 55) * (pass === 0 ? 1 : 0.7);
-      const lut = new Float32Array(256);
-      for (let d = 0; d < 256; d++) lut[d] = Math.exp(-(d * d) / (2 * sigR * sigR));
+      const pf = pass === 0 ? 1 : 0.7;
+      const lut = new Float32Array(256 * 256), skip = new Uint8Array(256);
+      for (let yv = 0; yv < 256; yv++) {
+        const eff = Math.min(100, luma + shadow * dark(yv));
+        skip[yv] = eff < 0.5 ? 1 : 0;
+        const sg = (5 + eff / 100 * 55) * pf;
+        for (let d = 0; d < 256; d++) lut[(yv << 8) + d] = Math.exp(-(d * d) / (2 * sg * sg));
+      }
       const dst = new Uint8Array(n);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const i = y * w + x, c0 = cur[i];
+        if (skip[c0]) { dst[i] = c0; continue; }
         let sum = 0, ws = 0, q = 0;
         for (let dy = -R; dy <= R; dy++) {
           const yy = Math.min(h - 1, Math.max(0, y + dy));
           for (let dx = -R; dx <= R; dx++, q++) {
             const xx = Math.min(w - 1, Math.max(0, x + dx)), v = cur[yy * w + xx];
-            const wt = sw[q] * lut[Math.abs(v - c0)];
+            const wt = sw[q] * lut[(c0 << 8) + Math.abs(v - c0)];
             sum += wt * v; ws += wt;
           }
         }

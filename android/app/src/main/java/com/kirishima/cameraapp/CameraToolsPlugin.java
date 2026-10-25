@@ -493,27 +493,28 @@ public class CameraToolsPlugin extends Plugin {
     private volatile boolean nnFlag;
     private volatile float nnMix = 0.4f;
     private int jobSeq = 0;
-    private volatile float dnLuma, dnChroma, sharpAmt;
+    private volatile float dnLuma, dnChroma, dnShadow, sharpAmt;
 
     private void readEnh(PluginCall call) {
         nnFlag = Boolean.TRUE.equals(call.getBoolean("nn", false));
         nnMix = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
         dnLuma = Math.max(0f, Math.min(100f, call.getFloat("dnLuma", 0f)));
         dnChroma = Math.max(0f, Math.min(100f, call.getFloat("dnChroma", 0f)));
+        dnShadow = Math.max(0f, Math.min(100f, call.getFloat("dnShadow", 0f)));
         sharpAmt = Math.max(0f, Math.min(100f, call.getFloat("sharpen", 0f)));
     }
 
-    private boolean enhPixelActive() { return dnLuma > 0f || dnChroma > 0f || sharpAmt > 0f; }
+    private boolean enhPixelActive() { return dnShadow > 0f || dnLuma > 0f || dnChroma > 0f || sharpAmt > 0f; }
 
     /** 降噪(在放大前,雜訊尚未被放大)。回傳可變 bitmap。 */
     private Bitmap enhDenoise(Bitmap bmp) {
-        if (dnLuma <= 0f && dnChroma <= 0f) return bmp;
+        if (dnLuma <= 0f && dnChroma <= 0f && dnShadow <= 0f) return bmp;
         int w = bmp.getWidth(), h = bmp.getHeight();
         if ((long) w * h > 40_000_000L) { progress("影像超過 40MP,略過降噪"); return bmp; }
         progress("降噪");
         int[] px = new int[w * h];
         bmp.getPixels(px, 0, w, 0, 0, w, h);
-        LookMath.denoise(px, w, h, dnLuma, dnChroma);
+        LookMath.denoise(px, w, h, dnLuma, dnChroma, dnShadow);
         bmp = ensureMutable(bmp);
         bmp.setPixels(px, 0, w, 0, 0, w, h);
         return bmp;
@@ -790,6 +791,7 @@ public class CameraToolsPlugin extends Plugin {
         final float dL = Math.max(0f, Math.min(100f, call.getFloat("dnLuma", 0f)));
         final float dC = Math.max(0f, Math.min(100f, call.getFloat("dnChroma", 0f)));
         final float sh = Math.max(0f, Math.min(100f, call.getFloat("sharpen", 0f)));
+        final float dS = Math.max(0f, Math.min(100f, call.getFloat("dnShadow", 0f)));
         final boolean auto = Boolean.TRUE.equals(call.getBoolean("auto", false));
         final int jobId = ++jobSeq;
         capExec.execute(() -> {
@@ -826,7 +828,7 @@ public class CameraToolsPlugin extends Plugin {
                     try {
                         mirrorFlag = mirror;
                         targetMpFlag = zoomOutMp;
-                        nnFlag = nnF; nnMix = nnM; dnLuma = dL; dnChroma = dC; sharpAmt = sh;
+                        nnFlag = nnF; nnMix = nnM; dnLuma = dL; dnChroma = dC; dnShadow = dS; sharpAmt = sh;
                         progress("處理 JPEG");
                         int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
                         if (s.yuv) {
