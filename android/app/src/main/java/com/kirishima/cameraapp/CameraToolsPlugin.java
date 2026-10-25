@@ -1294,6 +1294,16 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getPreviewStatus(PluginCall call) {
+        NativePreview v = np;
+        try {
+            call.resolve(v == null ? new JSObject() : new JSObject(v.status().toString()));
+        } catch (Throwable t) {
+            call.resolve(new JSObject());
+        }
+    }
+
+    @PluginMethod
     public void focusNativePreview(PluginCall call) {
         NativePreview v = np;
         if (v != null) v.focusAt(call.getFloat("u", 0.5f), call.getFloat("v", 0.5f));

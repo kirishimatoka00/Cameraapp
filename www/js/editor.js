@@ -40,7 +40,7 @@ function render() {
   A.processPixels(img.data, p);
   if (p.detail > 0) A.unsharp(img.data, E.w, E.h, A.detailAmount(p.detail), A.detailRadius(E.w, E.h));
   const en = enhNow();
-  if (en.sharp > 0) A.unsharp(img.data, E.w, E.h, en.sharp / 100 * 1.2, A.detailRadius(E.w, E.h));
+  if (en.sharp > 0) A.unsharp(img.data, E.w, E.h, en.sharp / 100 * 2.2, 1);
   const useGeo = E.tool !== 'erase' && !E.pick && !A.geoNeutral(E.geo);
   if (useGeo) {
     const o = A.geoApply(img, E.geo);

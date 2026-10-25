@@ -57,6 +57,33 @@ final class NativePreview {
     private int isoVal = 0;
     private float focusMeters = 0f;
     private float evVal = 0f;
+    private volatile float resFocusDio = -1f;
+    private volatile int resAfState = -1;
+    private volatile long resExpNs = 0;
+    private volatile int resIso = 0;
+    private final CameraCaptureSession.CaptureCallback cb = new CameraCaptureSession.CaptureCallback() {
+        @Override
+        public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, android.hardware.camera2.TotalCaptureResult res) {
+            Float fd = res.get(android.hardware.camera2.CaptureResult.LENS_FOCUS_DISTANCE);
+            Integer af = res.get(android.hardware.camera2.CaptureResult.CONTROL_AF_STATE);
+            Long et = res.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME);
+            Integer is = res.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY);
+            if (fd != null) resFocusDio = fd;
+            if (af != null) resAfState = af;
+            if (et != null) resExpNs = et;
+            if (is != null) resIso = is;
+        }
+    };
+
+    /** 目前實際回報的對焦屈光度 / AF 狀態 / 曝光(診斷與手動對焦起點用)。 */
+    org.json.JSONObject status() {
+        org.json.JSONObject o = new org.json.JSONObject();
+        try {
+            o.put("focusDio", resFocusDio).put("afState", resAfState).put("exposureNs", resExpNs).put("iso", resIso);
+        } catch (Throwable ignored) {
+        }
+        return o;
+    }
     String info = "";
 
     NativePreview(Activity a, String id, int left, int top, int w, int h, boolean mirror) {
@@ -177,7 +204,7 @@ final class NativePreview {
             if (torch) builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
             applyZoom();
             applyControls();
-            session.setRepeatingRequest(builder.build(), null, h);
+            session.setRepeatingRequest(builder.build(), cb, h);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             stop();
@@ -268,7 +295,7 @@ final class NativePreview {
         if (builder == null || session == null) return;
         try {
             applyControls();
-            session.setRepeatingRequest(builder.build(), null, h);
+            session.setRepeatingRequest(builder.build(), cb, h);
         } catch (Throwable ignored) {
         }
     }
@@ -306,7 +333,7 @@ final class NativePreview {
         if (builder == null || session == null) return;
         try {
             applyZoom();
-            session.setRepeatingRequest(builder.build(), null, h);
+            session.setRepeatingRequest(builder.build(), cb, h);
         } catch (Throwable ignored) {
         }
     }
@@ -345,7 +372,7 @@ final class NativePreview {
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
             session.capture(builder.build(), null, h);
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
-            session.setRepeatingRequest(builder.build(), null, h);
+            session.setRepeatingRequest(builder.build(), cb, h);
             h.removeCallbacksAndMessages("release");
             h.postAtTime(() -> {
                 try {
@@ -356,7 +383,7 @@ final class NativePreview {
                     builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
                     session.capture(builder.build(), null, h);
                     builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
-                    session.setRepeatingRequest(builder.build(), null, h);
+                    session.setRepeatingRequest(builder.build(), cb, h);
                 } catch (Throwable ignored) {
                 }
             }, "release", android.os.SystemClock.uptimeMillis() + 5000);

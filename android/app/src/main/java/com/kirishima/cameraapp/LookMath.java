@@ -276,6 +276,6 @@ final class LookMath {
     /** 銳利度 0..100 → unsharp(僅亮度) */
     static void sharpen(int[] px, int w, int h, float sharp) {
         if (sharp <= 0f) return;
-        unsharp(px, w, h, sharp / 100f * 1.2f, detailRadius(w, h));
+        unsharp(px, w, h, sharp / 100f * 2.2f, Math.max(1, Math.round(Math.max(w, h) / 3000f)));
     }
 }

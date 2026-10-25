@@ -683,9 +683,10 @@ const PARAMS = {
     cap: () => S.caps.focusDistance,
     toSlider: () => {
       const c = S.caps.focusDistance;
-      if (S.focusDist == null) return 0;
+      const d0 = S.focusDist != null ? S.focusDist : S.focusSeed;
+      if (d0 == null) return 0;
       const [dn, df] = focusDiopters(c);
-      return 100 * (1 / Math.max(S.focusDist, 0.01) - dn) / (df - dn);
+      return A.clamp(100 * (1 / Math.max(d0, 0.01) - dn) / (df - dn), 0, 100);
     },
     apply: async (s) => {
       const c = S.caps.focusDistance;
@@ -694,6 +695,7 @@ const PARAMS = {
       const dio = dn + (df - dn) * s / 100;
       const d = A.clamp(1 / Math.max(dio, 0.001), c.min, c.max);
       await applyManualFocus(d);
+      if (S.nativePrev) nativeFocusReadback();
       return d.toFixed(2) + 'm';
     },
     text: () => (S.focusManual && S.focusDist != null ? 'MF ' + S.focusDist.toFixed(2) : 'AF'),
@@ -701,12 +703,36 @@ const PARAMS = {
   },
 };
 
+/** 原生預覽:讀回機身實際回報的對焦距離,顯示在數值旁(確認機身有接受手動對焦) */
+let fbTimer = 0;
+function nativeFocusReadback() {
+  clearTimeout(fbTimer);
+  fbTimer = setTimeout(async () => {
+    try {
+      const st = await A.needNative().getPreviewStatus();
+      if (S.activeParam === 'focus' && st && st.focusDio > 0) {
+        $('paramVal').textContent = (S.focusDist ? S.focusDist.toFixed(2) + 'm' : '') + ' (機身 ' + (1 / st.focusDio).toFixed(2) + 'm)';
+      }
+    } catch (e) { /* ignore */ }
+  }, 350);
+}
+
 let paramToken = 0;
-function selectParam(name) {
+async function selectParam(name) {
   const row = $('paramRow');
   if (S.activeParam === name) { S.activeParam = null; row.hidden = true; A.refreshReadouts(); return; }
   const p = PARAMS[name];
   if (!p || !p.ok()) return;
+  if (name === 'focus' && S.nativePrev && S.focusDist == null) {
+    // 以目前自動對焦的位置當手動對焦起點,而不是從最近端開始
+    try {
+      const st = await A.needNative().getPreviewStatus();
+      if (st && st.focusDio > 0) {
+        const c = S.caps.focusDistance;
+        S.focusSeed = A.clamp(1 / st.focusDio, c.min, c.max);
+      }
+    } catch (e) { /* ignore */ }
+  }
   S.activeParam = name;
   row.hidden = false;
   $('paramLabel').textContent = p.label;
