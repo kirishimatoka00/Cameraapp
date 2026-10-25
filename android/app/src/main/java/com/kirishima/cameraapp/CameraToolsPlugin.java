@@ -82,6 +82,7 @@ public class CameraToolsPlugin extends Plugin {
     private static final String GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
+    private final ExecutorService capExec = Executors.newSingleThreadExecutor();
     private final ExecutorService faceExec = Executors.newSingleThreadExecutor();
     private final ExecutorService vexec = Executors.newSingleThreadExecutor();
 
@@ -491,6 +492,7 @@ public class CameraToolsPlugin extends Plugin {
     private volatile double targetMpFlag;
     private volatile boolean nnFlag;
     private volatile float nnMix = 0.4f;
+    private int jobSeq = 0;
     private volatile float dnLuma, dnChroma, sharpAmt;
 
     private void readEnh(PluginCall call) {
@@ -533,27 +535,43 @@ public class CameraToolsPlugin extends Plugin {
 
     /** 把 AI 放大結果與一般放大的原圖按比例混合,找回被 AI 抹掉的細節紋理。 */
     private static Bitmap blendWithBase(Bitmap nn, Bitmap base, float mix) {
-        if (mix >= 0.99f) return nn;
         Bitmap b = base;
         if (b.getWidth() != nn.getWidth() || b.getHeight() != nn.getHeight())
             b = resizeSmooth(base, nn.getWidth(), nn.getHeight());
         int w = nn.getWidth(), h = nn.getHeight();
-        int[] a = new int[w], c = new int[w];
-        int m = Math.round(mix * 256);
+        int[] a = new int[w], c0 = new int[w], cm = new int[w], cp = new int[w];
+        b.getPixels(cm, 0, w, 0, 0, w, 1);
+        int m256 = Math.round(Math.max(0f, Math.min(1f, mix)) * 256);
         for (int y = 0; y < h; y++) {
             nn.getPixels(a, 0, w, 0, y, w, 1);
-            b.getPixels(c, 0, w, 0, y, w, 1);
+            b.getPixels(c0, 0, w, 0, y, w, 1);
+            b.getPixels(cp, 0, w, 0, Math.min(h - 1, y + 1), w, 1);
             for (int x = 0; x < w; x++) {
-                int p = a[x], q = c[x];
-                int r = ((p >> 16 & 255) * m + (q >> 16 & 255) * (256 - m)) >> 8;
-                int g = ((p >> 8 & 255) * m + (q >> 8 & 255) * (256 - m)) >> 8;
-                int bl = ((p & 255) * m + (q & 255) * (256 - m)) >> 8;
-                a[x] = 0xFF000000 | r << 16 | g << 8 | bl;
+                int p = a[x], q = c0[x];
+                // 只在原圖有實際邊緣的地方採用 AI 細節;平坦區(牆面、天空、背景)大幅降低強度,避免長出怪紋理
+                int xl = Math.max(0, x - 1), xr = Math.min(w - 1, x + 1);
+                int g = Math.abs(lum(c0[xr]) - lum(c0[xl])) + Math.abs(lum(cp[x]) - lum(cm[x]));
+                int e = Math.min(256, g * 256 / 40);
+                int mm = (m256 * (64 + (e * 192 >> 8))) >> 8;
+                a[x] = 0xFF000000 | blendCh(p >> 16 & 255, q >> 16 & 255, mm) << 16
+                        | blendCh(p >> 8 & 255, q >> 8 & 255, mm) << 8 | blendCh(p & 255, q & 255, mm);
             }
             nn.setPixels(a, 0, w, 0, y, w, 1);
+            int[] t = cm; cm = c0; c0 = t;
         }
         if (b != base) b.recycle();
         return nn;
+    }
+
+    private static int lum(int c) {
+        return (77 * (c >> 16 & 255) + 150 * (c >> 8 & 255) + 29 * (c & 255)) >> 8;
+    }
+
+    /** AI 與原圖的差異限制在 ±40 內(抑制幻覺出的強烈假細節),再按強度混合。 */
+    private static int blendCh(int ai, int base, int mm) {
+        int d = ai - base;
+        if (d > 40) d = 40; else if (d < -40) d = -40;
+        return Math.max(0, Math.min(255, base + ((d * mm) >> 8)));
     }
 
     private JSObject finishAndSave(Bitmap bmp, String prefix, int quality, double aspect, double zoom,
@@ -766,50 +784,76 @@ public class CameraToolsPlugin extends Plugin {
             call.reject("缺少 cameraId");
             return;
         }
-        exec.execute(() -> {
+        final double zoomOutMp = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
+        final boolean nnF = Boolean.TRUE.equals(call.getBoolean("nn", false));
+        final float nnM = Math.max(0f, Math.min(1f, call.getFloat("nnMix", 0.4f)));
+        final float dL = Math.max(0f, Math.min(100f, call.getFloat("dnLuma", 0f)));
+        final float dC = Math.max(0f, Math.min(100f, call.getFloat("dnChroma", 0f)));
+        final float sh = Math.max(0f, Math.min(100f, call.getFloat("sharpen", 0f)));
+        final boolean auto = Boolean.TRUE.equals(call.getBoolean("auto", false));
+        final int jobId = ++jobSeq;
+        capExec.execute(() -> {
             try {
-                mirrorFlag = mirror;
-                targetMpFlag = call.getDouble("zoomOutMp", 0.0) == null ? 0.0 : call.getDouble("zoomOutMp", 0.0);
-                readEnh(call);
                 progress("以原生相機拍攝");
-                NativeShot.Result s = NativeShot.shoot(getContext(), r);
-                JSObject res;
-                if (s.jpeg != null) {
-                    progress("處理 JPEG");
-                    int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
-                    if (s.yuv) {
-                        orientation = s.jpegOrientationDeg == 90 ? ExifInterface.ORIENTATION_ROTATE_90
-                                : s.jpegOrientationDeg == 180 ? ExifInterface.ORIENTATION_ROTATE_180
-                                : s.jpegOrientationDeg == 270 ? ExifInterface.ORIENTATION_ROTATE_270
-                                : ExifInterface.ORIENTATION_NORMAL;
-                    }
-                    Bitmap bmp = null;
-                    if (s.frames.size() > 1) {
-                        bmp = mergeBurst(s.frames);
-                        if (bmp == null) s.notes.append("連拍合成失敗(記憶體不足或尺寸不一致),改存第一張;");
-                    }
-                    if (bmp == null) bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
-                    if (bmp == null) throw new IOException("JPEG 解碼失敗");
-                    bmp = applyOrientation(bmp, orientation);
-                    double residual = s.appliedZoom > 1.01f ? Math.max(1.0, r.zoom / s.appliedZoom) : cropZoom;
-                    res = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, residual, params, keepOriginal);
-                } else {
-                    res = new JSObject();
-                }
+                final NativeShot.Result s = NativeShot.shoot(getContext(), r);
+                JSObject res = new JSObject();
                 if (s.dng != null) {
                     progress("寫入 DNG");
                     Uri du = writeDng("RAW", s.dng);
                     res.put("rawUri", du.toString());
-                    if (!res.has("uri")) {
-                        res.put("uri", du.toString());
+                }
+                res.put("hasRaw", s.dng != null);
+                res.put("notes", s.notes.toString());
+                if (s.jpeg == null) {
+                    if (res.has("rawUri")) {
+                        res.put("uri", res.getString("rawUri"));
                         res.put("width", s.width);
                         res.put("height", s.height);
                         res.put("megapixels", s.width * (double) s.height / 1e6);
                     }
+                    call.resolve(res);
+                    return;
                 }
-                res.put("hasRaw", s.dng != null);
-                res.put("notes", s.notes.toString());
+                // 拍攝完成就先回傳;JPEG 後處理(合成/降噪/AI 放大/存檔)在背景佇列進行,可繼續拍照
+                res.put("queued", true);
+                res.put("job", jobId);
                 call.resolve(res);
+                exec.execute(() -> {
+                    JSObject done = new JSObject();
+                    done.put("job", jobId);
+                    done.put("auto", auto);
+                    done.put("hasRaw", s.dng != null);
+                    try {
+                        mirrorFlag = mirror;
+                        targetMpFlag = zoomOutMp;
+                        nnFlag = nnF; nnMix = nnM; dnLuma = dL; dnChroma = dC; sharpAmt = sh;
+                        progress("處理 JPEG");
+                        int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
+                        if (s.yuv) {
+                            orientation = s.jpegOrientationDeg == 90 ? ExifInterface.ORIENTATION_ROTATE_90
+                                    : s.jpegOrientationDeg == 180 ? ExifInterface.ORIENTATION_ROTATE_180
+                                    : s.jpegOrientationDeg == 270 ? ExifInterface.ORIENTATION_ROTATE_270
+                                    : ExifInterface.ORIENTATION_NORMAL;
+                        }
+                        Bitmap bmp = null;
+                        if (s.frames.size() > 1) {
+                            bmp = mergeBurst(s.frames);
+                            if (bmp == null) done.put("note", "連拍合成失敗,改存第一張");
+                        }
+                        if (bmp == null) bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
+                        if (bmp == null) throw new IOException("JPEG 解碼失敗");
+                        bmp = applyOrientation(bmp, orientation);
+                        double residual = s.appliedZoom > 1.01f ? Math.max(1.0, r.zoom / s.appliedZoom) : cropZoom;
+                        JSObject fin = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, residual, params, keepOriginal);
+                        done.put("uri", fin.getString("uri"));
+                        done.put("width", fin.getInt("width"));
+                        done.put("height", fin.getInt("height"));
+                        done.put("megapixels", fin.getDouble("megapixels"));
+                    } catch (Throwable t) {
+                        done.put("error", msg(t));
+                    }
+                    notifyListeners("jobDone", done);
+                });
             } catch (Throwable t) {
                 call.reject(msg(t));
             }
@@ -1290,6 +1334,13 @@ public class CameraToolsPlugin extends Plugin {
         NativePreview v = np;
         if (v != null) v.setManual(call.getDouble("exposureMs", 0.0), call.getInt("iso", 0),
                 call.getFloat("focusMeters", 0f), call.getFloat("ev", 0f));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setPreviewRect(PluginCall call) {
+        NativePreview v = np;
+        if (v != null) v.setRect(call.getInt("left", 0), call.getInt("top", 0), call.getInt("w", 0), call.getInt("h", 0));
         call.resolve();
     }
 

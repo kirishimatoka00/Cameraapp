@@ -35,7 +35,8 @@ import java.util.concurrent.TimeUnit;
 final class NativePreview {
     private final Activity act;
     private final String cameraId;
-    private final int left, top, vw, vh;
+    private volatile int left, top, vw, vh;
+    private volatile Size psz;
     private final boolean mirror;
     private final HandlerThread ht = new HandlerThread("nativepreview");
     private Handler h;
@@ -94,6 +95,22 @@ final class NativePreview {
         this.vw = w;
         this.vh = h;
         this.mirror = mirror;
+    }
+
+    /** 取景框位置/大小改變時只調整 TextureView,不重啟鏡頭。 */
+    void setRect(int l, int t, int w, int hh) {
+        left = l; top = t; vw = w; vh = hh;
+        act.runOnUiThread(() -> {
+            if (tv == null) return;
+            try {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) tv.getLayoutParams();
+                lp.width = Math.max(2, vw); lp.height = Math.max(2, vh);
+                lp.leftMargin = left; lp.topMargin = top;
+                tv.setLayoutParams(lp);
+                if (psz != null) applyTransform(psz);
+            } catch (Throwable ignored) {
+            }
+        });
     }
 
     void setInitialZoom(float z, boolean torch) {
@@ -187,6 +204,7 @@ final class NativePreview {
                     info = s.getWidth() + "x" + s.getHeight();
                     final Size sz = s;
                     final CountDownLatch t2 = new CountDownLatch(1);
+                    psz = sz;
                     act.runOnUiThread(() -> { applyTransform(sz); t2.countDown(); });
                     t2.await(2, TimeUnit.SECONDS);
                     break;

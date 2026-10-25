@@ -16,9 +16,9 @@ A.cloneEnh = (e) => {
 A.ENH_BUILTIN = [
   { id: 'off', name: '無', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 0, dnC: 0, sharp: 0 } },
   { id: 'std', name: '標準', builtin: true, enh: { burst: 1, nn: false, nnMix: 40, dnL: 20, dnC: 35, sharp: 30 } },
-  { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: true, nnMix: 40, dnL: 15, dnC: 35, sharp: 40 } },
+  { id: 'detail', name: '細節', builtin: true, enh: { burst: 3, nn: false, nnMix: 40, dnL: 15, dnC: 35, sharp: 40 } },
   { id: 'night', name: '夜景降噪', builtin: true, enh: { burst: 4, nn: false, nnMix: 40, dnL: 55, dnC: 70, sharp: 25 } },
-  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 60, dnL: 30, dnC: 50, sharp: 35 } },
+  { id: 'max', name: '最強', builtin: true, enh: { burst: 4, nn: true, nnMix: 40, dnL: 30, dnC: 50, sharp: 35 } },
 ];
 A.allEnhProfiles = () => A.ENH_BUILTIN.concat(A.settings.enhProfiles || []);
 A.findEnhProfile = (id) => A.allEnhProfiles().find((p) => p.id === id) || null;
@@ -26,6 +26,10 @@ A.findEnhProfile = (id) => A.allEnhProfiles().find((p) => p.id === id) || null;
 /** 確保 settings.enhCap / enhSet 結構完整 */
 A.ensureEnhState = () => {
   const st = A.settings;
+  if (st.enhV !== 2) {   // v2:Real-ESRGAN 會長出怪細節,改為預設關閉並重設強度
+    st.enhV = 2;
+    ['enhCap', 'enhSet'].forEach((k) => { if (st[k] && st[k].enh) { st[k].enh.nn = false; st[k].enh.nnMix = 40; } });
+  }
   if (!Array.isArray(st.enhProfiles)) st.enhProfiles = [];
   [['enhCap', true, 'detail'], ['enhSet', false, 'std']].forEach(([k, on, id]) => {
     let s = st[k];

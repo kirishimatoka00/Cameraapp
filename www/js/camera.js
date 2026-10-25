@@ -309,7 +309,11 @@ A.layoutFrame = () => {
   A.resizeOverlay();
   if (S.nativePrev && !S.nativeStarting) {
     const r = nativeRect();
-    if ([r.left, r.top, r.w, r.h].join(',') !== S.nativePrevKey) { S.nativePrevKey = ''; setTimeout(() => { if (S.nativePrev && !A.busy) A.restartLens(); }, 80); }
+    const key = [r.left, r.top, r.w, r.h].join(',');
+    if (key !== S.nativePrevKey) {
+      S.nativePrevKey = key;   // 只調整原生預覽的位置與大小,不重啟鏡頭(避免畫面一直重新載入/切換)
+      A.needNative().setPreviewRect(r).catch(() => {});
+    }
   }
 };
 new ResizeObserver(() => A.layoutFrame()).observe($('bottom'));
@@ -711,7 +715,7 @@ function nativeFocusReadback() {
     try {
       const st = await A.needNative().getPreviewStatus();
       if (S.activeParam === 'focus' && st && st.focusDio > 0) {
-        $('paramVal').textContent = (S.focusDist ? S.focusDist.toFixed(2) + 'm' : '') + ' (機身 ' + (1 / st.focusDio).toFixed(2) + 'm)';
+        $('paramVal').textContent = (1 / st.focusDio).toFixed(2) + 'm✓';
       }
     } catch (e) { /* ignore */ }
   }, 350);

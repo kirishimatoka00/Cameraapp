@@ -71,7 +71,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 .param-row { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
 .plabel { width: 36px; font-size: 12px; color: var(--dim); }
-.pval { width: 66px; text-align: right; font: 700 13px var(--mono); color: var(--accent); }
+.pval { width: 66px; white-space: nowrap; overflow: hidden; font-size: 11px; text-align: right; font: 700 13px var(--mono); color: var(--accent); }
 
 .video-opts { display: flex; justify-content: center; gap: 12px; }
 .seg { display: flex; background: rgba(34,37,43,.9); border-radius: 14px; padding: 2px; }
@@ -224,3 +224,5 @@ html.native-rec, html.native-rec body, html.native-rec #app, html.native-rec #fr
 html.native-rec #video { visibility: hidden; }
 
 #lensTag { display: none !important; }
+
+.bg-badge { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 6; padding: 4px 10px; border-radius: 12px; background: rgba(0,0,0,.6); color: var(--accent); font: 600 11px var(--mono); max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }

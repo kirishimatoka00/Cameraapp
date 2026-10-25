@@ -157,6 +157,34 @@ A.blobToBase64 = (blob) => new Promise((resolve, reject) => {
 A.bindProgress = () => {
   const p = A.CT();
   if (!p || !p.addListener) return;
-  try { p.addListener('progress', (e) => { if (e && e.stage) A.hudSub(e.stage); }); } catch (e) { /* ignore */ }
+  try {
+    p.addListener('progress', (e) => {
+      if (!e || !e.stage) return;
+      if (!A.$('hud').hidden) A.hudSub(e.stage);
+      else if (A.bg.n > 0) A.bgShow(e.stage);
+    });
+    p.addListener('jobDone', (e) => A.bgDone(e || {}));
+  } catch (e) { /* ignore */ }
+};
+
+/* ------------------------------------------------------------------ 背景處理佇列 */
+A.bg = { n: 0 };
+A.bgShow = (stage) => {
+  const b = A.$('bgBadge');
+  if (!b) return;
+  b.hidden = A.bg.n <= 0;
+  b.textContent = '背景處理 ' + A.bg.n + (stage ? ' · ' + stage : '');
+};
+A.bgAdd = (k) => { A.bg.n += k; A.bgShow(''); };
+A.bgDone = (e) => {
+  A.bg.n = Math.max(0, A.bg.n - 1);
+  A.bgShow('');
+  if (A.refreshThumb) A.refreshThumb();
+  if (e.error) A.toast('背景處理失敗:' + e.error, 6000);
+  else {
+    if (e.note) A.toast(e.note, 3000);
+    A.toast('已儲存 ' + e.width + '×' + e.height + '(' + (e.megapixels || 0).toFixed(1) + ' MP)' + (e.hasRaw ? ' + DNG' : ''), 2500);
+    if (e.auto && e.uri && A.runGemini && !A.busy) A.runGemini(e.uri, true).catch((x) => A.toast('Gemini 回推失敗:' + A.errMsg(x), 5000));
+  }
 };
 })();

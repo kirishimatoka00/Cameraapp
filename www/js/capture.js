@@ -131,6 +131,7 @@ async function shootNative(opts, rawWanted) {
     burst: rawWanted ? 1 : A.enhEff(st.enhCap).burst,
     focusU: S.lastFocus ? S.lastFocus.u : -1,
     focusV: S.lastFocus ? S.lastFocus.v : -1,
+    auto: !!(st.autoRestore && st.apiKey && S.within >= st.autoThreshold),
   });
   A.stopStream();
   await A.stopNativePrev();
@@ -176,9 +177,23 @@ async function shoot() {
       } else if (st.hdrOn) res = await shootHdr(opts);
       else {
         const blob = await takeStill();
-        A.hudSub('儲存中');
-        res = await A.needNative().saveImage(Object.assign({ data: await A.blobToBase64(blob) }, opts));
+        A.hudSub('送到背景處理');
+        const data = await A.blobToBase64(blob);
+        A.bgAdd(1);
+        A.needNative().saveImage(Object.assign({ data }, opts))
+          .then((r) => A.bgDone({ uri: r.uri, width: r.width, height: r.height, megapixels: r.megapixels }))
+          .catch((e) => A.bgDone({ error: A.errMsg(e) }));
+        res = { queued: true, webSave: true };
       }
+    }
+    if (res.queued) {
+      if (!res.webSave) A.bgAdd(1);
+      A.toast('已拍攝,背景處理中,可以繼續拍照' + (res.hasRaw ? '(DNG 已存)' : ''), 2200);
+      res.auto = !!(st.autoRestore && st.apiKey && S.within >= st.autoThreshold);
+      A.pendingAuto = A.pendingAuto || {};
+      if (res.job != null) A.pendingAuto[res.job] = res.auto;
+      A.refreshThumb();
+      return;
     }
     A.refreshThumb();
     const jpegSaved = !(res.hasRaw && res.uri === res.rawUri);
