@@ -1959,6 +1959,49 @@ public class CameraToolsPlugin extends Plugin {
                 orientation = orientationOf(is);
             }
 
+            // 對齊影格:以中間曝光為基準,用 MTB(不受曝光差異影響)估計各張的平移量
+            int[][] shift = new int[n][2];
+            try {
+                progress("HDR 對齊影格");
+                int ref = n / 2;
+                int ss = Math.max(1, Math.min(W, H) / 1100);
+                byte[][] lum8 = new byte[n][];
+                int lw = 0, lh = 0;
+                for (int i = 0; i < n; i++) {
+                    BitmapFactory.Options so = new BitmapFactory.Options();
+                    so.inSampleSize = ss;
+                    so.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                    Bitmap sb = BitmapFactory.decodeFile(files[i].getAbsolutePath(), so);
+                    if (sb == null) throw new IOException("縮圖解碼失敗");
+                    if (i == 0) { lw = sb.getWidth(); lh = sb.getHeight(); }
+                    if (sb.getWidth() != lw || sb.getHeight() != lh) throw new IOException("縮圖尺寸不一致");
+                    int[] tmp0 = new int[lw * lh];
+                    sb.getPixels(tmp0, 0, lw, 0, 0, lw, lh);
+                    sb.recycle();
+                    byte[] l8 = new byte[lw * lh];
+                    for (int k = 0; k < l8.length; k++) {
+                        int c = tmp0[k];
+                        l8[k] = (byte) (((c >> 16 & 255) * 77 + (c >> 8 & 255) * 150 + (c & 255) * 29) >> 8);
+                    }
+                    lum8[i] = l8;
+                }
+                int moved = 0;
+                for (int i = 0; i < n; i++) {
+                    if (i == ref) continue;
+                    int[] e = HdrAlign.estimate(lum8[ref], lum8[i], lw, lh);
+                    // 限制在畫面 10% 內,超過視為估計失敗
+                    int mx = (int) (0.10 * Math.min(lw, lh));
+                    if (Math.abs(e[0]) > mx || Math.abs(e[1]) > mx) continue;
+                    shift[i][0] = e[0] * ss;
+                    shift[i][1] = e[1] * ss;
+                    if (shift[i][0] != 0 || shift[i][1] != 0) moved++;
+                }
+                lum8 = null;
+                if (moved > 0) progress("已對齊 " + moved + " 張");
+            } catch (Throwable t) {
+                shift = new int[n][2];   // 對齊失敗就維持原樣
+            }
+
             out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
             final int R = Math.max(3, W / 700);
             final int pad = R + 1;
@@ -1986,10 +2029,26 @@ public class CameraToolsPlugin extends Plugin {
                 progress("HDR 合成 " + (int) (100.0 * y0 / H) + "%");
 
                 for (int i = 0; i < n; i++) {
-                    Bitmap b = dec[i].decodeRegion(new Rect(0, py0, W, py1), opts);
+                    final int sxi = shift[i][0], syi = shift[i][1];
+                    // 要的是基準座標 (x, py0..py1) 對應到影格 i 的 (x - sx, y - sy)
+                    int rl = Math.max(0, -sxi), rr = Math.min(W, W - sxi);
+                    int rt = Math.max(0, py0 - syi), rb = Math.min(H, py1 - syi);
+                    if (rr <= rl || rb <= rt) { rl = 0; rr = W; rt = Math.max(0, Math.min(H - 1, py0)); rb = Math.min(H, rt + 1); }
+                    Bitmap b = dec[i].decodeRegion(new Rect(rl, rt, rr, rb), opts);
                     if (b == null) throw new IOException("HDR 影格解碼失敗");
-                    b.getPixels(px[i], 0, W, 0, 0, W, rows);
+                    int bw = b.getWidth(), bh = b.getHeight();
+                    int[] blk = new int[bw * bh];
+                    b.getPixels(blk, 0, bw, 0, 0, bw, bh);
                     b.recycle();
+                    for (int yy = 0; yy < rows; yy++) {
+                        int srcY = Math.max(rt, Math.min(rb - 1, py0 + yy - syi)) - rt;
+                        int sb0 = srcY * bw;
+                        int db0 = yy * W;
+                        for (int xx = 0; xx < W; xx++) {
+                            int srcX = Math.max(rl, Math.min(rr - 1, xx - sxi)) - rl;
+                            px[i][db0 + xx] = blk[sb0 + srcX];
+                        }
+                    }
 
                     int[] P = px[i];
                     float[] L = lum[i];
