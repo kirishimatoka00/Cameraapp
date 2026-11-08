@@ -150,6 +150,43 @@ public class CameraToolsPlugin extends Plugin {
         return uri;
     }
 
+    /** PNG(無損壓縮)存檔 */
+    private Uri writePng(String prefix, Bitmap bmp) throws IOException {
+        Uri uri = createPending(prefix + "_" + stamp() + ".png", "image/png");
+        try (OutputStream os = resolver().openOutputStream(uri)) {
+            if (os == null) throw new IOException("無法寫入相簿");
+            if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, os)) throw new IOException("PNG 編碼失敗");
+        } catch (IOException | RuntimeException e) {
+            discard(uri);
+            throw e;
+        }
+        publish(uri);
+        return uri;
+    }
+
+    /** 高品質縮圖(線性光 Lanczos-3)到指定長邊;longEdge <= 0 或不比原圖小時原樣回傳。 */
+    private Bitmap resizeLong(Bitmap bmp, int longEdge) {
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        int cur = Math.max(w, h);
+        if (longEdge <= 0 || longEdge >= cur) return bmp;
+        double f = longEdge / (double) cur;
+        int dw = Math.max(1, (int) Math.round(w * f)), dh = Math.max(1, (int) Math.round(h * f));
+        progress("縮圖 " + dw + "×" + dh);
+        int[] px = new int[w * h];
+        bmp.getPixels(px, 0, w, 0, 0, w, h);
+        bmp.recycle();
+        int[] out = Resample.downscale(px, w, h, dw, dh);
+        px = null;
+        return Bitmap.createBitmap(out, dw, dh, Bitmap.Config.ARGB_8888);
+    }
+
+    /** 編輯輸出:縮圖後依格式存檔(png = 無損;jpeg 縮圖時用最高品質 100)。 */
+    private Uri writeEdited(String prefix, Bitmap bmp, int quality, String format, int longEdge) throws IOException {
+        if ("png".equals(format)) { progress("編碼 PNG(無損)"); return writePng(prefix, bmp); }
+        progress("編碼 JPEG");
+        return writeBitmap(prefix, bmp, longEdge > 0 ? 100 : quality);
+    }
+
     private Uri writeBitmap(String prefix, Bitmap bmp, int quality) throws IOException {
         Uri uri = createPending(prefix + "_" + stamp() + ".jpg");
         try (OutputStream os = resolver().openOutputStream(uri)) {
@@ -1044,6 +1081,8 @@ public class CameraToolsPlugin extends Plugin {
                 gPh = geoO == null ? 0f : (float) geoO.optDouble("ph", 0);
         final int gRot = geoO == null ? 0 : geoO.optInt("rot", 0);
         final boolean gFlip = geoO != null && geoO.optBoolean("flip", false);
+        final int rsLong = Math.max(0, call.getInt("resizeLong", 0));
+        final String fmt = "png".equals(call.getString("format", "jpeg")) ? "png" : "jpeg";
         if (uriStr == null) {
             call.reject("缺少 uri");
             return;
@@ -1068,8 +1107,8 @@ public class CameraToolsPlugin extends Plugin {
                     applyLook(bmp, rest);
                     bmp = enhSharpen(bmp);
                     if (!Geo.neutral(gAngle, gPv, gPh, gRot, gFlip)) { progress("角度與變形"); bmp = Geo.apply(bmp, gAngle, gPv, gPh, gRot, gFlip); }
-                    progress("編碼 JPEG");
-                    Uri outRaw = writeBitmap(prefix, bmp, quality);
+                    bmp = resizeLong(bmp, rsLong);
+                    Uri outRaw = writeEdited(prefix, bmp, quality, fmt, rsLong);
                     call.resolve(describe(outRaw));
                     return;
                 } catch (RawDev.Unsupported u) {
@@ -1101,8 +1140,8 @@ public class CameraToolsPlugin extends Plugin {
                 applyLook(bmp, params);
                 bmp = enhSharpen(bmp);
                 if (!Geo.neutral(gAngle, gPv, gPh, gRot, gFlip)) { progress("角度與變形"); bmp = Geo.apply(bmp, gAngle, gPv, gPh, gRot, gFlip); }
-                progress("編碼 JPEG");
-                Uri out = writeBitmap(prefix, bmp, quality);
+                bmp = resizeLong(bmp, rsLong);
+                Uri out = writeEdited(prefix, bmp, quality, fmt, rsLong);
                 call.resolve(describe(out));
             } catch (Throwable t) {
                 call.reject(msg(t));

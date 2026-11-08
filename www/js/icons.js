@@ -42,6 +42,7 @@
     geo: '<path d="M7 3v14h14"/><path d="M3 7h14v14"/>',
     eraser: '<path d="M8.5 19.5L3.8 14.8a1.5 1.5 0 0 1 0-2.1l8.5-8.5a1.5 1.5 0 0 1 2.1 0l5.7 5.7a1.5 1.5 0 0 1 0 2.1l-7.9 7.5z"/><path d="M9 9.5l6 6M8.5 19.5H20"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+    resize: '<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><rect x="3.5" y="11" width="9.5" height="9.5" rx="1.5"/><path d="M13.5 10.5l4-4M14 6.5h3.5V10"/>',
     play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
   };
   A.icon = (name) => '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || '') + '</svg>';
@@ -70,7 +71,7 @@
   A.setIconLabel($('vNN'), 'chip', 'AI 放大');
   A.setIconLabel($('vGemini'), 'wand', 'AI 回推');
   A.setIconLabel($('vDelete'), 'trash', '刪除');
-  const et = { quality: 'sparkle', geo: 'geo', color: 'palette', erase: 'eraser', ai: 'wand' };
+  const et = { quality: 'sparkle', geo: 'geo', color: 'palette', size: 'resize', erase: 'eraser', ai: 'wand' };
   document.querySelectorAll('#eTabs button').forEach((b) => {
     const sp = b.querySelector('span');
     if (sp && et[b.dataset.t]) sp.innerHTML = A.icon(et[b.dataset.t]);

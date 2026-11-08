@@ -214,7 +214,74 @@ function toolAi(p) {
   p.appendChild(btn('✨ AI 強化(Gemini)', 'act accent', aiEnhance));
 }
 
-const TOOLS = { quality: toolQuality, geo: toolGeo, color: toolColor, erase: toolErase, ai: toolAi };
+/* 尺寸(縮小):原生端以線性光 Lanczos-3 縮圖,可存 PNG 無損 */
+const RS_PRESETS = [
+  ['原尺寸', 'orig'], ['75%', 0.75], ['50%', 0.5], ['33%', 1 / 3], ['25%', 0.25],
+  ['4K 3840', 3840], ['2K 2560', 2560], ['FHD 1920', 1920], ['1280', 1280], ['1080', 1080],
+];
+const fullDims = () => {
+  let fw = E.fullW || E.w, fh = E.fullH || E.h;
+  if ((fw > fh) !== (E.w > E.h)) [fw, fh] = [fh, fw];      // 依預覽方向(已轉正)對齊
+  if (E.geo && (E.geo.rot & 1)) [fw, fh] = [fh, fw];
+  return [fw, fh];
+};
+/** 目標長邊像素;0 = 不縮 */
+const rsLong = () => {
+  const r = E.rs;
+  if (!r || r.mode === 'orig') return 0;
+  const [fw, fh] = fullDims(), L = Math.max(fw, fh);
+  const t = r.mode === 'pct' ? Math.round(L * r.v) : Math.round(r.v);
+  return t > 0 && t < L ? t : 0;
+};
+const rsActive = () => rsLong() > 0;
+
+function toolSize(p) {
+  const r = E.rs;
+  const info = document.createElement('div');
+  info.className = 'k-row';
+  info.style.cssText = 'font-size:14px;color:var(--text)';
+  const upd = () => {
+    const [fw, fh] = fullDims(), t = rsLong();
+    const f = t ? t / Math.max(fw, fh) : 1;
+    const ow = Math.round(fw * f), oh = Math.round(fh * f);
+    info.innerHTML = '原圖 ' + fw + '×' + fh + '　→　<b style="color:var(--accent)">' + ow + '×' + oh + '</b>(' + (ow * oh / 1e6).toFixed(1) + ' MP)';
+    chips.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.k === (r.mode === 'orig' ? 'orig' : r.mode + ':' + r.v)));
+    fmt.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.f === r.fmt));
+  };
+  const chips = document.createElement('div');
+  chips.className = 'wb-row';
+  RS_PRESETS.forEach(([label, v]) => {
+    const mode = v === 'orig' ? 'orig' : (v < 1 ? 'pct' : 'long');
+    const b = btn(label, 'mini', () => { r.mode = mode; r.v = v; custom.value = ''; upd(); });
+    b.dataset.k = mode === 'orig' ? 'orig' : mode + ':' + v;
+    chips.appendChild(b);
+  });
+  const cr = document.createElement('div');
+  cr.className = 'inline';
+  cr.innerHTML = '<span style="font-size:13px;color:var(--dim);white-space:nowrap">自訂長邊</span>';
+  const custom = document.createElement('input');
+  custom.type = 'number'; custom.className = 'txt'; custom.placeholder = '像素,例如 3000'; custom.min = '16'; custom.inputMode = 'numeric';
+  if (r.mode === 'long' && !RS_PRESETS.some((x) => x[1] === r.v)) custom.value = String(r.v);
+  custom.oninput = () => { const v = parseInt(custom.value, 10); if (v > 0) { r.mode = 'long'; r.v = v; } else { r.mode = 'orig'; } upd(); };
+  cr.appendChild(custom);
+  const fl = document.createElement('div');
+  fl.className = 'k-row';
+  fl.textContent = '輸出格式';
+  const fmt = document.createElement('div');
+  fmt.className = 'wb-row';
+  [['PNG 無損', 'png'], ['JPEG 最高品質(100)', 'jpeg']].forEach(([label, f]) => {
+    const b = btn(label, 'mini', () => { r.fmt = f; upd(); });
+    b.dataset.f = f;
+    fmt.appendChild(b);
+  });
+  const n = document.createElement('p');
+  n.className = 'note';
+  n.textContent = '縮圖在最後一步以原圖解析度進行:先轉成線性光再用 Lanczos-3 濾波取樣(濾波寬度隨縮小倍率加寬),細節保留最多,也不會產生鋸齒、摩爾紋或亮暗交界變暗。PNG 為無損壓縮,存檔後不再有任何壓縮損失(檔案較大);JPEG 以最高品質 100 編碼,檔案小但仍是有損格式。不會放大,目標比原圖大時維持原尺寸。';
+  p.appendChild(info); p.appendChild(chips); p.appendChild(cr); p.appendChild(fl); p.appendChild(fmt); p.appendChild(n);
+  upd();
+}
+
+const TOOLS = { quality: toolQuality, geo: toolGeo, color: toolColor, size: toolSize, erase: toolErase, ai: toolAi };
 
 function openTool(name) {
   const panel = $('ePanel');
@@ -409,6 +476,7 @@ async function loadPreview(uri) {
   const img = new Image();
   await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error('解碼失敗')); img.src = 'data:image/jpeg;base64,' + r.data; });
   E.w = img.naturalWidth; E.h = img.naturalHeight;
+  E.fullW = r.fullWidth || r.width || E.w; E.fullH = r.fullHeight || r.height || E.h;
   tmpc.width = E.w; tmpc.height = E.h;
   tctx.drawImage(img, 0, 0);
   E.base = tctx.getImageData(0, 0, E.w, E.h);
@@ -426,6 +494,7 @@ A.openEditor = async (uri) => {
   E.uri = uri; E.origUri = uri; E.erased = false;
   E.look = A.neutralLook();
   E.geo = A.geoZero();
+  E.rs = { mode: 'orig', v: 1, fmt: 'png' };
   E.base = null; E.neutral = null; E.devKey = ''; E.dn = null; E.dnKey = '';
   zmSet(1, 0, 0);
   A.ensureEnhState();
@@ -448,7 +517,7 @@ A.openEditor = async (uri) => {
 
 $('eBack').onclick = () => A.closeOverlay($('editor'));
 $('eReset').onclick = async () => {
-  E.look = A.neutralLook(); E.enhSt.on = false; E.geo = A.geoZero(); clearMask();
+  E.look = A.neutralLook(); E.enhSt.on = false; E.geo = A.geoZero(); E.rs = { mode: 'orig', v: 1, fmt: 'png' }; clearMask();
   zmSet(1, 0, 0);
   if (E.uri !== E.origUri && !A.busy) {
     E.uri = E.origUri; E.erased = false;
@@ -462,11 +531,12 @@ document.addEventListener('overlayclose', (e) => {
 });
 
 const geoArgs = () => ({ geo: { angle: E.geo.angle, pv: E.geo.pv, ph: E.geo.ph, rot: E.geo.rot & 3, flip: !!E.geo.flip } });
-const hasEdits = () => !(A.paramsNeutral(A.lookParams(E.look)) && !A.enhActive(enhNow()) && A.geoNeutral(E.geo));
+const hasEdits = () => rsActive() || !(A.paramsNeutral(A.lookParams(E.look)) && !A.enhActive(enhNow()) && A.geoNeutral(E.geo));
 
 async function saveEdited(prefix) {
   const p = A.lookParams(E.look);
-  return A.needNative().editImage(Object.assign({ uri: E.uri, look: p, quality: A.settings.jpegQuality, prefix: prefix || 'EDIT' }, A.enhArgs(enhNow()), geoArgs()));
+  return A.needNative().editImage(Object.assign({ uri: E.uri, look: p, quality: A.settings.jpegQuality, prefix: prefix || 'EDIT' }, A.enhArgs(enhNow()), geoArgs(),
+    rsActive() ? { resizeLong: rsLong(), format: E.rs.fmt } : {}));
 }
 
 $('eSave').onclick = async () => {
