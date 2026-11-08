@@ -29,7 +29,7 @@ A.redrawOverlay = () => {
   octx.clearRect(0, 0, overlay.width, overlay.height);
   octx.scale(dpr, dpr);
   const mode = A.settings.focusAssist;
-  if (mode === 'face' || (mode !== 'track' && A.settings.faceAuto)) drawFaces();
+  if (mode === 'face') drawFaces();   // 只有人臉模式才顯示人臉框
   if (mode === 'track' && V.track) drawTrack();
 };
 
@@ -100,7 +100,7 @@ function grabFrame(width, jpeg) {
 
 async function faceTick() {
   const mode = A.settings.focusAssist;
-  const want = mode === 'face' || (mode !== 'track' && A.settings.faceAuto);
+  const want = mode === 'face';   // 單點/追焦模式不做人臉偵測
   if (!want || (!S.stream && !S.nativePrev) || document.hidden || V.faceBusy || A.busy || S.recording) {
     if (!want && V.faces.length) { V.faces = []; A.redrawOverlay(); }
     return;
@@ -133,7 +133,7 @@ function focusFace(f, show) {
 /** 沒有手動指定時,自動對最大的人臉對焦 */
 let manualFaceUntil = 0;
 function autoFaceFocus() {
-  if (!A.settings.faceAuto && A.settings.focusAssist !== 'face') return;
+  if (A.settings.focusAssist !== 'face' || !A.settings.faceAuto) return;
   if (!V.faces.length || S.focusManual || S.recording === 'busy') return;
   const now = performance.now();
   if (now < manualFaceUntil) {
@@ -247,7 +247,7 @@ A.handleTap = (x, y) => {
     startTrack(u, v);
     return;
   }
-  if (mode === 'face' || A.settings.faceAuto) {
+  if (mode === 'face') {
     // 命中人臉 → 對該臉對焦並鎖定
     const hit = V.faces.find((f) => u >= f.x - 0.02 && u <= f.x + f.w + 0.02 && v >= f.y - 0.02 && v <= f.y + f.h + 0.02);
     if (hit) {
