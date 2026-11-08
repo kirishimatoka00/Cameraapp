@@ -9,11 +9,14 @@ const video = $('video');
 
 A.refreshHdrChip = () => {
   const st = A.settings, b = $('btnHdr');
-  if (st.hdrOn) { b.textContent = 'HDR ' + st.hdrCount + '張 ±' + st.hdrRange; b.classList.add('on'); }
-  else { b.textContent = 'HDR 關'; b.classList.remove('on'); }
+  A.setIcon(b, 'hdr', st.hdrOn ? 'HDR ' + st.hdrCount + '張 ±' + st.hdrRange : 'HDR 關');
+  b.classList.toggle('on', !!st.hdrOn);
   $('btnShutter').classList.toggle('hdr', !!st.hdrOn);
 };
-$('btnHdr').onclick = () => { A.settings.hdrOn = !A.settings.hdrOn; A.saveSettings(); A.refreshHdrChip(); };
+$('btnHdr').onclick = () => {
+  A.settings.hdrOn = !A.settings.hdrOn; A.saveSettings(); A.refreshHdrChip();
+  A.toast(A.settings.hdrOn ? 'HDR 開:' + A.settings.hdrCount + ' 張 ±' + A.settings.hdrRange + ' EV' : 'HDR 關', 1500);
+};
 
 A.refreshThumb = async () => {
   try {

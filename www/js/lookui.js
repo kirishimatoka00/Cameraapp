@@ -232,7 +232,11 @@ A.initLookUI = () => {
     A.toast('已儲存色彩檔案「' + name + '」');
   };
 
-  function updateChips() { $('btnProfile').textContent = A.profileLabel(); }
+  function updateChips() {
+    const lb = A.profileLabel();
+    A.setIcon($('btnProfile'), 'filter', '色彩檔案:' + lb);
+    $('btnProfile').classList.toggle('on', lb !== '標準');
+  }
   A.updateProfileChip = updateChips;
   document.addEventListener('lookchange', updateChips);
   if (!A.settings.look) A.settings.look = A.neutralLook();

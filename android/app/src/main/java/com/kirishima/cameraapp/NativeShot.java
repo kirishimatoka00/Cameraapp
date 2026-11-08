@@ -57,7 +57,7 @@ final class NativeShot {
         int jpegOrientationDeg;
         boolean yuv;                // 靜態影像來自 YUV 轉成的 JPEG(沒有 EXIF 方向)
         int width, height;
-        java.util.List<byte[]> frames = new java.util.ArrayList<>();   // 連拍的所有 JPEG(含第一張)
+        java.util.List<byte[]> frames = java.util.Collections.synchronizedList(new java.util.ArrayList<>());   // 連拍的所有 JPEG(含第一張)
         float appliedZoom = 1f;     // 已在感測器端套用的變焦倍率
         StringBuilder notes = new StringBuilder();
     }
@@ -296,6 +296,12 @@ final class NativeShot {
             res.jpegOrientationDeg = orient;
             sb.set(CaptureRequest.JPEG_ORIENTATION, orient);
             sb.set(CaptureRequest.JPEG_QUALITY, (byte) Math.max(95, req.jpegQuality));
+            final int shots = (jpegReader != null && !useRaw) ? Math.max(1, Math.min(8, req.burst)) : 1;
+            if (shots > 1) {
+                // 連拍:鎖定曝光與白平衡,所有影格亮度/色溫一致,合成時不會互相拉扯
+                if (!manualExp) sb.set(CaptureRequest.CONTROL_AE_LOCK, true);
+                sb.set(CaptureRequest.CONTROL_AWB_LOCK, true);
+            }
             final CaptureRequest stillReq = sb.build();
             CaptureRequest stillReq2 = stillReq;
             if (req.halNr == 4 && cc != null) {   // 微弱:關與最小交替,連拍合成後等於約一半強度
@@ -308,30 +314,36 @@ final class NativeShot {
             final CaptureRequest altReq = stillReq2;
             final CameraCaptureSession.CaptureCallback stillCb = new CameraCaptureSession.CaptureCallback() {
                 @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult tr) {
-                    stillResult = tr;
+                    if (stillResult == null) stillResult = tr;
                     gotResult.countDown();
                 }
                 @Override public void onCaptureFailed(CameraCaptureSession s, CaptureRequest r, android.hardware.camera2.CaptureFailure f) {
-                    error = new IOException("拍攝失敗(原因 " + f.getReason() + ")");
+                    if (shots <= 1) error = new IOException("拍攝失敗(原因 " + f.getReason() + ")");
                     gotResult.countDown(); gotJpeg.countDown(); gotRaw.countDown();
                 }
             };
-            final int shots = (jpegReader != null && !useRaw) ? Math.max(1, Math.min(8, req.burst)) : 1;
-            for (int k = 0; k < shots; k++) {
-                if (k > 0) {
-                    res.jpeg = null;
-                    gotJpeg = new CountDownLatch(1);
-                    gotResult = new CountDownLatch(1);
-                }
-                session.capture((req.halNr == 4 && (k % 2) == 1) ? altReq : stillReq, stillCb, h);
-                long cap = 10_000L + (manualExp ? req.exposureNs / 1_000_000L * 2 : 0);
-                if (!gotResult.await(cap, TimeUnit.MILLISECONDS)) throw new IOException("等待拍攝結果逾時");
-                check();
-                if (!gotJpeg.await(8, TimeUnit.SECONDS)) throw new IOException("等待 JPEG 逾時");
-                if (k == 0 && !gotRaw.await(8, TimeUnit.SECONDS)) throw new IOException("等待 RAW 逾時");
-                check();
-                if (res.jpeg != null) res.frames.add(res.jpeg);
+            // 一次送出整組連拍(影格間隔最短,手震位移小、對齊更準)
+            wantFrames = shots;
+            res.frames.clear();
+            res.jpeg = null;
+            gotJpeg = new CountDownLatch(jpegReader != null ? shots : 0);
+            gotResult = new CountDownLatch(1);
+            List<CaptureRequest> burstReqs = new ArrayList<>();
+            for (int k = 0; k < shots; k++) burstReqs.add((req.halNr == 4 && (k % 2) == 1) ? altReq : stillReq);
+            if (shots == 1) session.capture(stillReq, stillCb, h);
+            else session.captureBurst(burstReqs, stillCb, h);
+            long expMs = manualExp ? req.exposureNs / 1_000_000L : 0;
+            long cap = 10_000L + expMs * 2;
+            if (!gotResult.await(cap, TimeUnit.MILLISECONDS)) throw new IOException("等待拍攝結果逾時");
+            check();
+            long jwait = 8_000L + (shots - 1) * (1_500L + expMs);
+            if (!gotJpeg.await(jwait, TimeUnit.MILLISECONDS)) {
+                if (res.frames.isEmpty()) throw new IOException("等待 JPEG 逾時");
+                res.notes.append("連拍只收到 ").append(res.frames.size()).append("/").append(shots).append(" 張;");
             }
+            if (!gotRaw.await(8, TimeUnit.SECONDS)) throw new IOException("等待 RAW 逾時");
+            check();
+            synchronized (res.frames) { res.frames = new ArrayList<>(res.frames); }
             if (!res.frames.isEmpty()) res.jpeg = res.frames.get(0);
             check();
 
@@ -360,6 +372,7 @@ final class NativeShot {
 
 
     private volatile boolean rawActive;
+    private volatile int wantFrames = 1;
 
     /** 建立 ImageReader + 擷取串流;成功回傳 true。失敗時會清掉這次建立的資源。 */
     private boolean configure(Size prev, Size jpegSz, Size rawSz, boolean wantJpeg, boolean useRaw, boolean yuv) throws InterruptedException {
@@ -374,11 +387,11 @@ final class NativeShot {
         outs.add(previewSurface);
         if (wantJpeg) {
             jpegReader = ImageReader.newInstance(jpegSz.getWidth(), jpegSz.getHeight(),
-                    yuv ? ImageFormat.YUV_420_888 : ImageFormat.JPEG, 2);
+                    yuv ? ImageFormat.YUV_420_888 : ImageFormat.JPEG, yuv ? 3 : 4);
             res.yuv = yuv;
             jpegReader.setOnImageAvailableListener(rd -> {
                 try (Image im = rd.acquireNextImage()) {
-                    if (im != null && res.jpeg == null) {
+                    if (im != null && res.frames.size() < wantFrames) {
                         byte[] a;
                         if (yuv) {
                             a = yuvToJpeg(im, req.jpegQuality);
@@ -387,7 +400,8 @@ final class NativeShot {
                             a = new byte[b.remaining()];
                             b.get(a);
                         }
-                        res.jpeg = a;
+                        if (res.jpeg == null) res.jpeg = a;
+                        res.frames.add(a);
                         res.width = im.getWidth();
                         res.height = im.getHeight();
                         gotJpeg.countDown();

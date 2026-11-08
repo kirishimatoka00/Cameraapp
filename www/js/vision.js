@@ -264,7 +264,7 @@ A.handleTap = (x, y) => {
 A.updateFocusChip = () => {
   const m = A.settings.focusAssist;
   const b = $('btnFocusAssist');
-  b.textContent = MODE_LABEL[m];
+  A.setIcon(b, { single: 'focus', face: 'face', track: 'track' }[m], '對焦模式:' + MODE_LABEL[m]);
   b.classList.toggle('on', m !== 'single');
 };
 

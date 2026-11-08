@@ -282,7 +282,7 @@ function updateLensTag() {
 /* ------------------------------------------------------------------ 取景框比例與版面 */
 
 const RATIO_ORDER = ['3:4', '1:1', '9:16', 'full'];
-const RATIO_LABEL = { '3:4': '3:4', '1:1': '1:1', '9:16': '9:16', full: '全螢幕' };
+const RATIO_LABEL = { '3:4': '3:4', '1:1': '1:1', '9:16': '9:16', full: 'Full' };
 
 A.layoutFrame = () => {
   const W = viewfinder.clientWidth, H = viewfinder.clientHeight;
@@ -326,7 +326,9 @@ new ResizeObserver(() => A.layoutFrame()).observe($('topbar'));
 window.addEventListener('resize', () => A.layoutFrame());
 
 A.updateRatioChip = () => {
-  $('btnRatio').textContent = S.mode === 'video' ? '影片' : RATIO_LABEL[A.settings.ratio];
+  const rt = S.mode === 'video' ? 'Full' : RATIO_LABEL[A.settings.ratio];
+  $('btnRatio').innerHTML = '<span class="rt">' + rt + '</span>';
+  $('btnRatio').setAttribute('aria-label', '畫面比例 ' + rt);
   $('btnRatio').classList.toggle('on', A.settings.ratio !== '3:4' && S.mode !== 'video');
 };
 $('btnRatio').onclick = () => {
@@ -447,14 +449,18 @@ A.renderLensButtons = () => {
     b.dataset.z = String(p);
     if (!ratios.some((r) => Math.abs(r - p) < 0.01)) b.classList.add('digital');
     b.textContent = (p < 1 ? p.toFixed(1) : String(p)) + (p < 1 ? '' : '×');
-    b.onclick = () => A.setZoom(p, true);
+    b.onclick = () => {
+      // 再點一次目前的倍率 → 展開/收起連續變焦尺規
+      if (b.classList.contains('active')) { row.parentElement.classList.toggle('expanded'); return; }
+      A.setZoom(p, true);
+    };
     row.appendChild(b);
   });
   const lk = document.createElement('button');
   lk.className = 'lens-btn lock';
   const lkLabel = () => {
     const L = S.lens[S.lensKey];
-    lk.textContent = A.settings.lensLock ? '🔒' + (L ? L.ratio + '×鏡' : '鎖定') : '🔓自動';
+    A.setIcon(lk, A.settings.lensLock ? 'lock' : 'unlock', A.settings.lensLock ? '鎖定在' + (L ? L.ratio + '×鏡' : '目前鏡頭') : '鏡頭自動切換');
     lk.classList.toggle('on', !!A.settings.lensLock);
   };
   A.refreshLensLock = lkLabel;
@@ -578,7 +584,8 @@ async function applyTorch(on) {
 $('btnLight').onclick = async () => {
   const order = ['off', 'flash', 'torch'];
   S.lightMode = order[(order.indexOf(S.lightMode) + 1) % order.length];
-  $('btnLight').textContent = { off: '🚫', flash: '⚡', torch: '🔦' }[S.lightMode];
+  A.setIcon($('btnLight'), { off: 'flashOff', flash: 'flash', torch: 'torch' }[S.lightMode], { off: '閃光燈:關', flash: '閃光燈:拍照時', torch: '補光燈:常亮' }[S.lightMode]);
+  $('btnLight').classList.toggle('on', S.lightMode !== 'off');
   await applyTorch(S.lightMode === 'torch');
   if (S.lightMode !== 'off' && !S.caps.torch) A.toast('此鏡頭不支援補光燈');
 };
@@ -847,7 +854,7 @@ A.updateRawChip = () => {
   const ok = !!(info && info.raw);
   b.classList.toggle('on', ok && A.settings.rawOn);
   b.classList.toggle('off', !ok);
-  b.textContent = ok ? (A.settings.rawOn ? 'RAW 開' : 'RAW 關') : 'RAW ✕';
+  A.setIcon(b, 'raw', ok ? (A.settings.rawOn ? 'RAW 開' : 'RAW 關') : '此鏡頭不支援 RAW');
 };
 $('btnRaw').onclick = () => {
   const info = A.nativeLensInfo();

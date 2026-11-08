@@ -28,8 +28,10 @@ final class SuperRes {
         // 1. 基準影格 = 最銳利
         int ref = 0;
         double best = -1;
+        double[] sharp = new double[n];
         for (int i = 0; i < n; i++) {
             double s = sharpness(luma[i], w, h);
+            sharp[i] = s;
             if (s > best) {
                 best = s;
                 ref = i;
@@ -67,6 +69,13 @@ final class SuperRes {
             int m = 0;
             for (int k = 0; k < gx * gy; k++) m = Math.max(m, (int) Math.ceil(Math.abs(flowY[i][k])));
             maxFy[i] = m + 2;
+        }
+
+        // 2b. 挑片(lucky imaging):手震糊掉的影格降低權重或捨棄,至少保留 2 張
+        float[] fw = frameWeights(sharp, ref);
+        for (int i = 0; i < n; i++) {
+            if (i == ref || fw[i] >= 0.999f) continue;
+            for (int k = 0; k < conf[i].length; k++) conf[i][k] *= fw[i];
         }
 
         // 3. 分條帶 splat
@@ -146,6 +155,23 @@ final class SuperRes {
             }
         }
         return d;
+    }
+
+    /** 依銳利度比例給每張權重:≥95% 全權重,≤75% 捨棄,中間線性;保證至少 2 張有權重。 */
+    static float[] frameWeights(double[] sharp, int ref) {
+        int n = sharp.length;
+        float[] fw = new float[n];
+        double best = sharp[ref] <= 0 ? 1 : sharp[ref];
+        int alive = 0, second = -1;
+        double secondS = -1;
+        for (int i = 0; i < n; i++) {
+            double r = sharp[i] / best;
+            fw[i] = i == ref ? 1f : (float) Math.max(0, Math.min(1, (r - 0.75) / 0.20));
+            if (fw[i] > 0) alive++;
+            if (i != ref && sharp[i] > secondS) { secondS = sharp[i]; second = i; }
+        }
+        if (alive < 2 && second >= 0) fw[second] = Math.max(fw[second], 0.5f);
+        return fw;
     }
 
     private static double sharpness(byte[] l, int w, int h) {

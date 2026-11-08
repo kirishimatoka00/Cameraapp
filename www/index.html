@@ -44,30 +44,21 @@
 
   <!-- 頂部列 -->
   <header id="topbar">
-    <button class="tb" id="btnSettings" aria-label="設定">⚙</button>
-    <button class="tb" id="btnLight" aria-label="閃光燈">🚫</button>
-    <button class="tb" id="btnFlip" aria-label="切換前後鏡頭">⟲</button>
-    <div class="chips" id="topChips">
-      <button class="chip" id="btnRaw" hidden>RAW</button>
-      <button class="chip" id="btnHdr">HDR 關</button>
-      <button class="chip" id="btnEnh">畫質 關</button>
-      <button class="chip" id="btnRatio">3:4</button>
-      <button class="chip" id="btnGrid">格線</button>
-      <button class="chip" id="btnFocusAssist">對焦 單點</button>
-      <button class="chip" id="btnProfile">標準</button>
-    </div>
+    <button class="tb" id="btnSettings" aria-label="設定"></button>
+    <button class="tb" id="btnLight" aria-label="閃光燈"></button>
+    <button class="tb" id="btnRaw" hidden></button>
+    <button class="tb" id="btnHdr"></button>
+    <button class="tb" id="btnEnh"></button>
+    <button class="tb" id="btnRatio">3:4</button>
+    <button class="tb" id="btnGrid"></button>
+    <button class="tb" id="btnFocusAssist"></button>
+    <button class="tb" id="btnProfile"></button>
+    <button class="tb" id="btnColor" aria-label="色彩與白平衡"></button>
     <div id="lensTag" class="tag">—</div>
   </header>
 
   <!-- 底部控制 -->
   <section id="bottom">
-    <div id="paramRow" class="param-row" hidden>
-      <span class="plabel" id="paramLabel">快門</span>
-      <input type="range" id="paramRange" min="0" max="100" step="0.5" value="50">
-      <span class="pval" id="paramVal">—</span>
-      <button class="mini" id="paramAuto">自動</button>
-    </div>
-
     <div class="readouts" id="readouts">
       <button class="ro" data-p="shutter"><small>快門</small><b id="roShutter">AUTO</b></button>
       <button class="ro" data-p="iso"><small>ISO</small><b id="roIso">AUTO</b></button>
@@ -77,37 +68,42 @@
       <button class="ro" data-p="focus"><small>對焦</small><b id="roFocus">AF</b></button>
     </div>
 
+    <div id="paramRow" class="param-row" hidden>
+      <div class="param-head"><span class="plabel" id="paramLabel">快門</span><span class="pval" id="paramVal">—</span><button class="mini" id="paramAuto">自動</button></div>
+      <input type="range" id="paramRange" min="0" max="100" step="0.5" value="50">
+    </div>
+
     <div class="video-opts" id="videoOpts" hidden>
       <div class="seg" id="segRes">
-        <button data-v="1080P">1080P</button><button data-v="2K">2K</button><button data-v="4K">4K</button><button data-v="8K">8K</button>
+        <button data-v="1080P">FHD</button><button data-v="2K">2K</button><button data-v="4K">UHD</button><button data-v="8K">8K</button>
       </div>
       <div class="seg" id="segFps">
         <button data-v="30">30</button><button data-v="60">60</button>
       </div>
     </div>
 
-    <div class="lens-area">
+    <div class="lens-area" id="lensArea">
       <input type="range" id="zoomRange" min="0" max="100" step="0.5" value="26.4" aria-label="變焦">
       <div class="lens-row" id="lensRow"></div>
     </div>
 
     <div class="mode-tabs" id="modeTabs">
       <button data-mode="photo" class="on">照片</button>
-      <button data-mode="manual">手動</button>
-      <button data-mode="video">影片</button>
+      <button data-mode="manual">專業</button>
+      <button data-mode="video">錄影</button>
     </div>
 
     <div class="shutter-bar">
       <button class="thumb" id="btnThumb" aria-label="相簿"><img id="thumbImg" alt=""></button>
       <button class="shutter" id="btnShutter" aria-label="拍照"><span></span></button>
-      <button class="round-btn" id="btnColor" aria-label="色彩與白平衡">🎨</button>
+      <button class="round-btn" id="btnFlip" aria-label="切換前後鏡頭"></button>
     </div>
   </section>
 </div>
 
 <!-- 色彩面板(底部抽屜) -->
 <div id="colorSheet" class="sheet" hidden>
-  <div class="sheet-card">
+  <div class="sheet-card"><div class="grabber"></div>
     <div class="sheet-head">
       <h2>色彩與白平衡</h2>
       <button class="mini" id="csReset">重設</button>
@@ -119,7 +115,7 @@
 
 <!-- 畫質提升選單 -->
 <div id="enhSheet" class="sheet" hidden>
-  <div class="sheet-card">
+  <div class="sheet-card"><div class="grabber"></div>
     <div class="sheet-head">
       <h2>畫質提升</h2>
       <button class="icon-btn small" id="enClose" aria-label="關閉">✕</button>
@@ -130,7 +126,7 @@
 
 <!-- 色彩檔案選單 -->
 <div id="profileSheet" class="sheet" hidden>
-  <div class="sheet-card">
+  <div class="sheet-card"><div class="grabber"></div>
     <div class="sheet-head">
       <h2>色彩檔案</h2>
       <button class="icon-btn small" id="psClose" aria-label="關閉">✕</button>
@@ -175,7 +171,7 @@
       <img id="vBase" alt="">
       <img id="vTile" alt="">
     </div>
-    <button class="play-btn" id="vPlay" hidden>▶ 播放</button>
+    <button class="play-btn" id="vPlay" hidden aria-label="播放"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg></button>
     <div class="viewer-hint" id="vHint">雙指縮放、雙擊放大;放大後會自動載入原生像素</div>
   </div>
   <div class="viewer-actions" id="vActions">
@@ -220,7 +216,7 @@
 <div id="settings" class="overlay" hidden>
   <div class="bar">
     <button class="icon-btn" id="sClose" aria-label="返回">‹</button>
-    <h1>設定</h1>
+    <h1>相機設定</h1>
   </div>
   <div class="settings-body">
 
@@ -374,6 +370,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <script src="js/core.js"></script>
+<script src="js/icons.js"></script>
 <script src="js/look.js"></script>
 <script src="js/lookui.js"></script>
 <script src="js/enhance.js"></script>

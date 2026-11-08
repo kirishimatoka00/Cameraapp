@@ -217,7 +217,7 @@ A.enhChipLabel = () => {
 A.refreshEnhChip = () => {
   const b = $('btnEnh');
   if (!b) return;
-  b.textContent = A.enhChipLabel();
+  A.setIcon(b, 'sparkle', A.enhChipLabel());
   b.classList.toggle('on', !!(A.settings.enhCap && A.settings.enhCap.on));
 };
 
