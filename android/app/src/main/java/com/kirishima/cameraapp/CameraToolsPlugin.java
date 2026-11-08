@@ -1420,6 +1420,7 @@ public class CameraToolsPlugin extends Plugin {
                 NativePreview v = new NativePreview(getActivity(), id, left, top, w, hh, mirror);
                 v.setInitialZoom((float) zoom, torch);
                 np = v;
+                v.setStable(focusStable);
                 v.start(getBridge().getWebView());
                 JSObject r = new JSObject();
                 r.put("size", v.info);
@@ -1467,9 +1468,19 @@ public class CameraToolsPlugin extends Plugin {
     @PluginMethod
     public void focusNativePreview(PluginCall call) {
         NativePreview v = np;
-        if (v != null) v.focusAt(call.getFloat("u", 0.5f), call.getFloat("v", 0.5f));
+        if (v != null) v.focusAt(call.getFloat("u", 0.5f), call.getFloat("v", 0.5f), Boolean.TRUE.equals(call.getBoolean("auto", false)));
         call.resolve();
     }
+
+    /** 望遠(原生預覽)對焦穩定開關 */
+    @PluginMethod
+    public void setFocusStable(PluginCall call) {
+        focusStable = !Boolean.FALSE.equals(call.getBoolean("on", true));
+        NativePreview v = np;
+        if (v != null) v.setStable(focusStable);
+        call.resolve();
+    }
+    private volatile boolean focusStable = true;
 
     @PluginMethod
     public void grabPreviewFrame(PluginCall call) {

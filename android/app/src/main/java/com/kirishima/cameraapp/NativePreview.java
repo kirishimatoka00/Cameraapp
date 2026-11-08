@@ -70,7 +70,11 @@ final class NativePreview {
             Long et = res.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME);
             Integer is = res.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY);
             if (fd != null) resFocusDio = fd;
-            if (af != null) resAfState = af;
+            if (af != null) {
+                resAfState = af;
+                if (af == android.hardware.camera2.CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED) lockOk = true;
+                else if (af == android.hardware.camera2.CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED) lockOk = false;
+            }
             if (et != null) resExpNs = et;
             if (is != null) resIso = is;
         }
@@ -309,6 +313,7 @@ final class NativePreview {
 
     /** exposureMs/iso/focusMeters 為 0 代表自動;ev 只在自動曝光時有效。 */
     void setManual(double exposureMs, int iso, float focusM, float ev) {
+        final boolean wasManualFocus = focusMeters > 0f;
         expNs = exposureMs > 0 ? Math.round(exposureMs * 1e6) : 0;
         isoVal = iso;
         focusMeters = focusM;
@@ -319,7 +324,7 @@ final class NativePreview {
             session.setRepeatingRequest(builder.build(), cb, h);
         } catch (Throwable ignored) {
         }
-        if (focusM <= 0f) scheduleScan(200);
+        if (focusM <= 0f && wasManualFocus) scheduleScan(200);   // 只改曝光/EV 時不重新對焦
     }
 
     private void applyControls() {
@@ -352,6 +357,7 @@ final class NativePreview {
     }
 
     void setZoom(float z) {
+        if (Math.abs(z - zoom) < 0.005f && builder != null) return;   // 倍率沒變就不重新對焦
         zoom = z;
         if (builder == null || session == null) return;
         try {
@@ -365,6 +371,8 @@ final class NativePreview {
     /** 單次對焦掃描(自動對焦模式下才有意義)。 */
     void triggerScan() {
         if (builder == null || session == null || focusMeters > 0f) return;
+        rotSinceLock = 0f;
+        lockedAt = android.os.SystemClock.uptimeMillis();
         try {
             builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO);
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
@@ -392,24 +400,58 @@ final class NativePreview {
     private volatile boolean moved = false;
     private final float[] lp = new float[3];
 
+    // ---- 對焦穩定:對到焦後鎖住,只有「鏡頭真的轉向別處並停下來」或「使用者點擊」才重新對焦
+    volatile boolean stable = true;          // 對焦穩定功能(設定可關)
+    private volatile boolean lockOk = false;      // 上一次單次對焦是否成功
+    private volatile float rotSinceLock = 0f;     // 對焦後累積的轉動角度(弧度)
+    private volatile long lockedAt = 0;
+    private volatile float lastU = -1f, lastV = -1f;
+    private long lastGyroNs = 0;
+    /** 轉動超過這個角度才算換了拍攝對象(約為畫面寬的 8%,依倍率縮小) */
+    private float rotThreshold() {
+        return (float) Math.toRadians(3.0) / Math.max(1f, zoom);
+    }
+
     private void startMotion() {
         try {
             sm = (android.hardware.SensorManager) act.getSystemService(Context.SENSOR_SERVICE);
-            android.hardware.Sensor acc = sm == null ? null : sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
-            if (acc == null) return;
+            if (sm == null) return;
+            android.hardware.Sensor gyro = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE);
+            android.hardware.Sensor acc = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
+            final boolean useGyro = gyro != null;
+            if (gyro == null && acc == null) return;
             sl = new android.hardware.SensorEventListener() {
                 @Override public void onSensorChanged(android.hardware.SensorEvent e) {
-                    float dx = e.values[0] - lp[0], dy = e.values[1] - lp[1], dz = e.values[2] - lp[2];
-                    for (int i = 0; i < 3; i++) lp[i] += 0.15f * (e.values[i] - lp[i]);
-                    if (dx * dx + dy * dy + dz * dz > 2.5f) { lastMove = android.os.SystemClock.uptimeMillis(); moved = true; }
+                    if (useGyro) {
+                        float w = (float) Math.sqrt(e.values[0] * e.values[0] + e.values[1] * e.values[1] + e.values[2] * e.values[2]);
+                        if (lastGyroNs != 0) {
+                            float dt = Math.min(0.1f, (e.timestamp - lastGyroNs) / 1e9f);
+                            if (w > 0.03f) rotSinceLock += w * dt;     // 忽略陀螺儀零點雜訊
+                        }
+                        lastGyroNs = e.timestamp;
+                        // 手持微震約 0.05~0.15 rad/s;刻意轉向才會超過 0.35
+                        if (w > (stable ? 0.35f : 0.2f)) { lastMove = android.os.SystemClock.uptimeMillis(); moved = true; }
+                    } else {
+                        float dx = e.values[0] - lp[0], dy = e.values[1] - lp[1], dz = e.values[2] - lp[2];
+                        for (int i = 0; i < 3; i++) lp[i] += 0.15f * (e.values[i] - lp[i]);
+                        if (dx * dx + dy * dy + dz * dz > (stable ? 8f : 2.5f)) {
+                            lastMove = android.os.SystemClock.uptimeMillis(); moved = true;
+                            rotSinceLock += 1f;   // 沒有陀螺儀:大幅晃動就視為換對象
+                        }
+                    }
                 }
                 @Override public void onAccuracyChanged(android.hardware.Sensor s, int a) { }
             };
-            sm.registerListener(sl, acc, android.hardware.SensorManager.SENSOR_DELAY_GAME, h);
+            sm.registerListener(sl, useGyro ? gyro : acc, android.hardware.SensorManager.SENSOR_DELAY_GAME, h);
             h.postDelayed(new Runnable() {
                 @Override public void run() {
                     if (h == null || session == null) return;
-                    if (moved && android.os.SystemClock.uptimeMillis() - lastMove > 600) { moved = false; triggerScan(); }
+                    long now = android.os.SystemClock.uptimeMillis();
+                    if (moved && now - lastMove > (stable ? 700 : 600)) {
+                        moved = false;
+                        // 穩定模式:只是手抖/小幅修正構圖(轉動不到門檻)而且焦點已鎖定 → 維持原焦點
+                        if (!stable || !lockOk || rotSinceLock > rotThreshold()) triggerScan();
+                    }
                     h.postDelayed(this, 250);
                 }
             }, 250);
@@ -417,10 +459,25 @@ final class NativePreview {
         }
     }
 
+    void setStable(boolean on) {
+        stable = on;
+    }
 
     /** 以預覽內容(直立、0..1)座標對焦並測光。 */
     void focusAt(float u, float v) {
+        focusAt(u, v, false);
+    }
+
+    /** auto = 人臉/追焦等自動發出的對焦要求;穩定模式下若焦點已鎖定且目標幾乎沒移動,就不重新掃描。 */
+    void focusAt(float u, float v, boolean auto) {
         if (focusMeters > 0f) return;   // 手動對焦時不做點擊對焦
+        if (auto && stable && lockOk && lastU >= 0f) {
+            float d = (float) Math.hypot(u - lastU, v - lastV);
+            if (d < 0.08f && rotSinceLock < rotThreshold()) return;
+        }
+        lastU = u; lastV = v;
+        rotSinceLock = 0f;
+        lockedAt = android.os.SystemClock.uptimeMillis();
         if (builder == null || session == null || cc == null || active == null) return;
         try {
             Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);

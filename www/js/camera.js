@@ -189,6 +189,7 @@ async function startNativePrev(L) {
   document.documentElement.classList.add('native-rec');
   S.nativeStarting = true;
   try {
+    try { await A.needNative().setFocusStable({ on: A.settings.focusStable !== false }); } catch (e) { /* ignore */ }
     const r0 = await A.needNative().startNativePreview(Object.assign({
       cameraId: String(L.nativeId), zoom: Math.max(1, S.within || 1),
       mirror: !!(S.front && A.settings.selfieMirror), torch: S.lightMode === 'torch',
@@ -543,8 +544,8 @@ A.focusAtFrame = (x, y, silent) => {
   A.focusAtVid(u, v);
 };
 let focusTimer;
-A.focusAtVid = async (u, v) => {
-  if (S.nativePrev) { S.lastFocus = { u, v }; A.needNative().focusNativePreview({ u, v }).catch(() => {}); return; }
+A.focusAtVid = async (u, v, auto) => {
+  if (S.nativePrev) { S.lastFocus = { u, v }; A.needNative().focusNativePreview({ u, v, auto: !!auto }).catch(() => {}); return; }
   if (!S.track || S.focusManual) return;
   try { await S.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: u, y: v }] }] }); } catch (e) { /* ignore */ }
   try { await S.track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); } catch (e) { /* ignore */ }

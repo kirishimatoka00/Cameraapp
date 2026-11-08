@@ -66,6 +66,7 @@ function sync() {
   $('setHdrOn').checked = st.hdrOn;
   $('setHdrCount').value = String(st.hdrCount);
   $('setNightFrames').value = String(st.nightFrames);
+  $('setFocusStable').checked = st.focusStable !== false;
   $('setNightEv').value = String(st.nightEv);
   $('setYuvBurst').checked = st.yuvBurst !== false;
   $('setHdrRange').value = String(st.hdrRange);
@@ -143,6 +144,10 @@ A.bindSettings = () => {
   $('setFaceAuto').onchange = (e) => { st.faceAuto = e.target.checked; A.saveSettings(); };
 
   $('setHdrOn').onchange = (e) => { st.hdrOn = e.target.checked; A.saveSettings(); A.refreshHdrChip(); };
+  $('setFocusStable').onchange = (e) => {
+    st.focusStable = e.target.checked; A.saveSettings();
+    if (A.CT()) A.CT().setFocusStable({ on: st.focusStable }).catch(() => {});
+  };
   $('setNightFrames').onchange = (e) => { st.nightFrames = parseInt(e.target.value, 10); A.saveSettings(); };
   $('setNightEv').onchange = (e) => { st.nightEv = parseFloat(e.target.value); A.saveSettings(); };
   $('setYuvBurst').onchange = (e) => { st.yuvBurst = e.target.checked; A.saveSettings(); };

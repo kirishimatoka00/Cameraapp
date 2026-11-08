@@ -127,7 +127,7 @@ function focusFace(f, show) {
   V.lastFaceFocus = performance.now();
   const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
   if (show) { const [fx, fy] = A.vidToFrame(cx, cy); A.showReticle(fx, fy); }
-  A.focusAtVid(cx, cy);
+  A.focusAtVid(cx, cy, !show);   // 自動跟臉(非點擊)交給原生端判斷要不要重新對焦
 }
 
 /** 沒有手動指定時,自動對最大的人臉對焦 */
@@ -230,7 +230,7 @@ async function trackTick() {
     if ((moved > 0.04 && now - V.trackFocusAt > 350) || now - V.trackFocusAt > 2500) {
       t.lastFocusU = t.u; t.lastFocusV = t.v; V.trackFocusAt = now;
       A.noContinuousAfter = false;
-      A.focusAtVid(t.u, t.v);
+      A.focusAtVid(t.u, t.v, true);
     }
   }
   A.redrawOverlay();
