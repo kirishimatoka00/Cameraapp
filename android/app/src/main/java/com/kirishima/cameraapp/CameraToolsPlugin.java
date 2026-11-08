@@ -2017,7 +2017,10 @@ public class CameraToolsPlugin extends Plugin {
         try (InputStream is = new java.io.FileInputStream(files[0])) {
             orientation = orientationOf(is);
         }
-        double z = Math.max(1.0, zoom);
+        double zAll = Math.max(1.0, zoom);
+        // 超高倍率:對齊合成至少要 ~320px 的區域,剩下的倍率在合成後再裁切
+        double z = Math.min(zAll, Math.max(1.0, Math.min(W, H) / 320.0));
+        final double srResidual = zAll / z;
         int rw = Math.max(64, ((int) Math.round(W / z)) & ~1);
         int rh = Math.max(64, ((int) Math.round(H / z)) & ~1);
         // 記憶體保護:區域越大,可用影格越少
@@ -2048,7 +2051,7 @@ public class CameraToolsPlugin extends Plugin {
         Bitmap out = Bitmap.createBitmap(merged, outW, outH, Bitmap.Config.ARGB_8888);
         Bitmap fin = applyOrientation(out, orientation);
         progress("編碼 JPEG");
-        JSObject res = finishAndSave(fin, "SR", quality, cropAspect, 1.0, params, keepOriginal);
+        JSObject res = finishAndSave(fin, "SR", quality, cropAspect, srResidual, params, keepOriginal);
         res.put("frames", use);
         return res;
     }

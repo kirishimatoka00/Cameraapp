@@ -51,6 +51,8 @@ final class NativePreview {
     private float zoom = 1f;
     private boolean torch;
     private Rect cropRect;
+    private float maxDig = 1f;              // 感測器端最大數位變焦
+    private volatile float viewExtra = 1f;  // 超過感測器上限的部分改由預覽畫面放大
     private float coverSx = 1f, coverSy = 1f;
     private volatile float cAspect = 4f / 3f;   // 直立內容的 高/寬
     private volatile Throwable error;
@@ -141,6 +143,7 @@ final class NativePreview {
             try {
                 cc = cm.getCameraCharacteristics(cameraId);
                 active = cc.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            { Float mz = cc.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM); maxDig = mz == null || mz < 1f ? 1f : mz; }
             } catch (Throwable t) {
                 cc = null;
             }
@@ -270,13 +273,22 @@ final class NativePreview {
         coverSx = sx;
         coverSy = sy;
         m.postScale(sx, sy, viewW / 2f, viewH / 2f);
+        if (viewExtra > 1.001f) m.postScale(viewExtra, viewExtra, viewW / 2f, viewH / 2f);   // 超過感測器上限的放大
         if (mirror) m.postScale(-1f, 1f, viewW / 2f, viewH / 2f);
         tv.setTransform(m);
     }
 
     private void applyZoom() {
-        if (builder == null || active == null) return;
-        float z = Math.max(1f, zoom);
+        if (builder == null) return;
+        float want = Math.max(1f, zoom);
+        float z = active == null ? 1f : Math.min(want, maxDig);
+        float ex = want / z;
+        if (Math.abs(ex - viewExtra) > 1e-3f) {
+            viewExtra = ex;
+            final Size p0 = psz;
+            act.runOnUiThread(() -> { if (p0 != null) applyTransform(p0); });
+        }
+        if (active == null) return;
         if (z > 1.01f) {
             int cw = Math.round(active.width() / z), ch = Math.round(active.height() / z);
             int cx = active.centerX(), cy = active.centerY();
@@ -474,6 +486,7 @@ final class NativePreview {
 
     /** auto = 人臉/追焦等自動發出的對焦要求;穩定模式下若焦點已鎖定且目標幾乎沒移動,就不重新掃描。 */
     void focusAt(float u, float v, boolean auto) {
+        if (viewExtra > 1.001f) { u = 0.5f + (u - 0.5f) / viewExtra; v = 0.5f + (v - 0.5f) / viewExtra; }
         if (focusMeters > 0f) return;   // 手動對焦時不做點擊對焦
         if (auto && stable && lockOk && lastU >= 0f) {
             float d = (float) Math.hypot(u - lastU, v - lastV);

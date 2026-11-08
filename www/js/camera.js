@@ -110,7 +110,7 @@ A.assignLenses = () => {
 
 const lensRatios = () => Object.values(S.lens).map((l) => l.ratio).sort((a, b) => a - b);
 const minZoom = () => { const r = lensRatios(); return r.length ? r[0] : 1; };
-const MAX_ZOOM = 10;
+const MAX_ZOOM = 100;   // 超過感測器數位變焦上限的部分由預覽放大 + 拍攝後裁切
 
 function chooseLens(Z) {
   const entries = Object.entries(S.lens).sort((a, b) => a[1].ratio - b[1].ratio);
@@ -382,8 +382,8 @@ A.resizeOverlay = () => {
 
 /* ------------------------------------------------------------------ 變焦 */
 
-const zToSlider = (z) => 100 * Math.log(z / 0.5) / Math.log(20);
-const sliderToZ = (v) => 0.5 * Math.pow(20, v / 100);
+const zToSlider = (z) => 100 * Math.log(z / 0.5) / Math.log(200);
+const sliderToZ = (v) => 0.5 * Math.pow(200, v / 100);
 
 A.applyPreviewZoom = () => {
   const L = S.lens[S.lensKey];
@@ -450,7 +450,7 @@ A.renderLensButtons = () => {
   const row = $('lensRow');
   row.innerHTML = '';
   const ratios = lensRatios();
-  const set = new Set([1, 1.5, 2, 3, 5, 10].concat(ratios));
+  const set = new Set([1, 2, 3, 5, 10, 30, 100].concat(ratios));
   const presets = Array.from(set).filter((p) => p >= minZoom() - 0.001).sort((a, b) => a - b);
   presets.forEach((p) => {
     const b = document.createElement('button');
