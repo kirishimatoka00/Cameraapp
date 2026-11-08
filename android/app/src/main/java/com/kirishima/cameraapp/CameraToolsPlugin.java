@@ -775,7 +775,7 @@ public class CameraToolsPlugin extends Plugin {
 
     /** RAW 連拍 → Bayer 對齊合成 → DNG(+ 可選顯影成 JPEG)。在處理佇列執行。 */
     private void rawMergeJob(NativeShot.Result s, String prefix, int quality, double cropAspect, double cropZoom,
-                             LookMath.Params params, boolean keepOriginal, boolean develop, JSObject done) throws IOException {
+                             LookMath.Params params, boolean keepOriginal, boolean develop, JSObject done) throws Exception {
         int w = s.rawW, h = s.rawH;
         short[][] fr = s.rawFrames.toArray(new short[0][]);
         s.rawFrames.clear();
