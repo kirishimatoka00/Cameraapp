@@ -12,6 +12,11 @@ final class SuperRes {
         void on(String s);
     }
 
+    /** 合成後、量化成 8-bit 之前的色調處理(rgb 為 0..255 浮點,可就地修改)。 */
+    interface Tone {
+        void map(float[] rgb);
+    }
+
     static final int TILE = 32;
 
     private SuperRes() {
@@ -21,6 +26,11 @@ final class SuperRes {
 
     /** @param fr n 張 ARGB 影格,尺寸皆為 w×h。@return outW×outH 的 ARGB。 */
     static int[] merge(int[][] fr, int w, int h, float U, int outW, int outH, Progress prog) {
+        return merge(fr, w, h, U, outW, outH, prog, null);
+    }
+
+    static int[] merge(int[][] fr, int w, int h, float U, int outW, int outH, Progress prog, Tone tone) {
+        final float[] tc = new float[3];
         final int n = fr.length;
         byte[][] luma = new byte[n][];
         for (int i = 0; i < n; i++) luma[i] = lumaOf(fr[i], w, h);
@@ -114,9 +124,15 @@ final class SuperRes {
                     float b = bil(p00 & 255, p10 & 255, p01 & 255, p11 & 255, fx, fy);
                     int k = oy * outW + ox;
                     float wt = aW[k] + prior;
-                    int R = clampi(Math.round((aR[k] + prior * r) / wt), 0, 255);
-                    int G = clampi(Math.round((aG[k] + prior * g) / wt), 0, 255);
-                    int B = clampi(Math.round((aB[k] + prior * b) / wt), 0, 255);
+                    float fr0 = (aR[k] + prior * r) / wt, fg0 = (aG[k] + prior * g) / wt, fb0 = (aB[k] + prior * b) / wt;
+                    if (tone != null) {
+                        tc[0] = fr0; tc[1] = fg0; tc[2] = fb0;
+                        tone.map(tc);
+                        fr0 = tc[0]; fg0 = tc[1]; fb0 = tc[2];
+                    }
+                    int R = clampi(Math.round(fr0), 0, 255);
+                    int G = clampi(Math.round(fg0), 0, 255);
+                    int B = clampi(Math.round(fb0), 0, 255);
                     out[(oy + oy0) * outW + ox] = 0xFF000000 | (R << 16) | (G << 8) | B;
                 }
             }

@@ -88,6 +88,7 @@
     </div>
 
     <div class="mode-tabs" id="modeTabs">
+      <button data-mode="night">夜景</button>
       <button data-mode="photo" class="on">照片</button>
       <button data-mode="manual">專業</button>
       <button data-mode="video">錄影</button>
@@ -282,7 +283,22 @@
       <h2>畫質提升</h2>
       <div id="enhSettingsBox"></div>
       <div class="wb-row" style="margin-top:10px"><button class="mini" id="btnEnhToCap">把這組設定複製到拍攝選單</button></div>
-      <p class="note">這裡的設定(含啟用開關)與拍攝介面的「畫質」選單各自獨立,互不連動:設定頁這組是後期修圖與相簿 AI 放大的預設值;拍攝選單那組只管拍照。多張合成對原生望遠任何倍率有效,主鏡頭則在數位變焦 ≥1.5× 時有效;AI 放大僅作用於數位變焦的裁切區;RAW 拍攝不套用。降噪與銳利度對所有 JPEG 有效。設定檔可在兩邊共用。</p>
+      <p class="note">這裡的設定(含啟用開關)與拍攝介面的「畫質」選單各自獨立,互不連動:設定頁這組是後期修圖與相簿 AI 放大的預設值;拍攝選單那組只管拍照。多張合成在任何倍率都有效(1.45× 以下以原生一次連拍、鎖定曝光;主鏡頭 1.45× 以上改用多張超解析);開啟「專業」模式的 RAW 時則變成 RAW 多張合成;AI 放大僅作用於數位變焦的裁切區;RAW 拍攝不套用。降噪與銳利度對所有 JPEG 有效。設定檔可在兩邊共用。</p>
+    </section>
+
+    <section class="card">
+      <h2>夜景模式</h2>
+      <label class="field">
+        <span>連拍張數</span>
+        <select id="setNightFrames" class="txt"><option value="4">4 張</option><option value="6">6 張</option><option value="8">8 張(最乾淨,較耗記憶體)</option></select>
+      </label>
+      <label class="field">
+        <span>每張壓暗</span>
+        <select id="setNightEv" class="txt"><option value="0">不壓暗</option><option value="-0.5">-0.5 EV</option><option value="-1">-1 EV(建議)</option><option value="-1.5">-1.5 EV</option><option value="-2">-2 EV</option></select>
+        <small>壓暗拍可保住燈光、縮短每張曝光(較不易手震);合成把雜訊平均掉後,再以浮點精度把暗部提亮回來。</small>
+      </label>
+      <label class="switch"><input type="checkbox" id="setYuvBurst"><span>連拍使用未壓縮 YUV 影格(畫質較好,較耗記憶體)</span></label>
+      <p class="note">夜景與多張合成都改用原生相機一次連拍、鎖定曝光與白平衡。RAW 多張合成:在「專業」模式開啟 RAW,並在畫質提升把多張合成設為 2 張以上,會在感測器原始資料上對齊合成,存成一張合成 DNG(若開啟「RAW 同時存 JPEG」則另存由合成 RAW 顯影的 JPEG)。</p>
     </section>
 
     <section class="card">

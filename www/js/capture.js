@@ -114,13 +114,15 @@ async function shootSR(opts) {
 }
 
 /** 以原生 Camera2 拍攝(RAW / 隱藏的望遠鏡頭)。會暫時釋放 WebView 預覽。 */
-async function shootNative(opts, rawWanted) {
+async function shootNative(opts, rawWanted, night) {
   const N = A.needNative();
   const key = S.lensKey;
   const info = A.nativeLensInfo();
   const st = A.settings;
   A.hudSub('釋放預覽,切換原生相機');
   const man = S.mode === 'manual' && S.man.exp;
+  const enhBurst = A.enhEff(st.enhCap).burst;
+  const nightEv = night ? (+st.nightEv || 0) : 0;
   const args = Object.assign({}, opts, {
     cameraId: info.id,
     raw: rawWanted,
@@ -128,10 +130,14 @@ async function shootNative(opts, rawWanted) {
     exposureMs: man && S.man.t ? S.man.t / 10 : 0,
     iso: man && S.man.iso ? Math.round(S.man.iso) : 0,
     focusMeters: S.mode === 'manual' && S.focusManual && S.focusDist ? S.focusDist : 0,
-    ev: man ? 0 : S.ev,
+    ev: man ? 0 : S.ev + nightEv,
     torch: S.lightMode === 'torch',
     zoom: S.within > 1.01 ? S.within : 1,
-    burst: rawWanted ? 1 : A.enhEff(st.enhCap).burst,
+    burst: rawWanted ? 1 : (night ? Math.max(2, st.nightFrames || 6) : enhBurst),
+    rawBurst: rawWanted ? enhBurst : 1,
+    preferYuv: st.yuvBurst !== false,
+    night: !!night,
+    nightEv,
     focusU: S.lastFocus ? S.lastFocus.u : -1,
     focusV: S.lastFocus ? S.lastFocus.v : -1,
     auto: !!(st.autoRestore && st.apiKey && S.within >= st.autoThreshold),
@@ -157,20 +163,32 @@ async function shoot() {
     const opts = baseOpts();
     const info = A.nativeLensInfo();
     const rawWanted = S.mode === 'manual' && st.rawOn && !!(info && info.raw);
-    const useNative = !!info && (info.virtual || rawWanted);
+    const night = S.mode === 'night';
+    if (night && !info) A.toast('此鏡頭無法以原生相機開啟,夜景改拍一般照片', 3500);
+    // 主鏡頭 1×~1.45× 的多張合成也走原生一次連拍(鎖定曝光、未壓縮 YUV);更高倍率仍用多張超解析
+    const nativeBurst = !!info && !rawWanted && !night && !st.hdrOn && A.enhEff(st.enhCap).burst > 1 && opts.cropZoom < 1.45;
+    const useNative = !!info && (info.virtual || rawWanted || night || nativeBurst);
     let res = null;
     if (useNative) {
-      if (st.hdrOn) A.toast('原生拍攝(RAW/隱藏望遠)暫不支援 HDR,改拍單張', 3000);
+      if (st.hdrOn && !night) A.toast('原生拍攝(RAW/隱藏望遠)暫不支援 HDR,改拍單張', 3000);
+      if (night) A.hud('夜景拍攝', '請保持穩定約 1~3 秒');
       try {
-        res = await shootNative(opts, rawWanted);
+        res = await shootNative(opts, rawWanted, night);
         if (res.notes) A.toast(res.notes, 4000);
       } catch (e) {
-        if (!info.virtual) throw e;
+        if (!info.virtual && (rawWanted || night)) throw e;
+        if (!info.virtual) {
+          A.toast('原生連拍失敗(' + A.errMsg(e) + '),改拍單張', 5000);
+          res = null;
+          A.forceWeb = true;
+          try { await A.startLens(S.lensKey); } catch (e2) { /* ignore */ }
+        } else {
         A.toast('望遠鏡頭無法由原生開啟(' + A.errMsg(e) + '),改用主鏡頭數位放大', 6000);
         opts.cropZoom = S.Z > 1.01 ? S.Z : 1;
         res = null;
         A.forceWeb = true;
         try { await A.startLens(S.lensKey); } catch (e2) { /* ignore */ }
+        }
       }
     }
     if (!res) {
@@ -191,7 +209,8 @@ async function shoot() {
     }
     if (res.queued) {
       if (!res.webSave) A.bgAdd(1);
-      A.toast('已拍攝,背景處理中,可以繼續拍照' + (res.hasRaw ? '(DNG 已存)' : ''), 2200);
+      A.toast(res.rawMerge ? '已拍攝 RAW ' + res.rawMerge + ' 張,背景合成中,可以繼續拍照'
+        : '已拍攝,背景處理中,可以繼續拍照' + (res.hasRaw ? '(DNG 已存)' : ''), 2200);
       res.auto = !!(st.autoRestore && st.apiKey && S.within >= st.autoThreshold);
       A.pendingAuto = A.pendingAuto || {};
       if (res.job != null) A.pendingAuto[res.job] = res.auto;

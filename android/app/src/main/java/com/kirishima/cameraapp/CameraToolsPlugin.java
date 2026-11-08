@@ -723,7 +723,7 @@ public class CameraToolsPlugin extends Plugin {
     }
 
     /** 連拍多張 → 對齊、去鬼影、平均(降噪、提高細節)。失敗回傳 null。 */
-    private Bitmap mergeBurst(java.util.List<byte[]> jpegs) {
+    private Bitmap mergeBurst(java.util.List<byte[]> jpegs, SuperRes.Tone tone) {
         try {
             int n = jpegs.size();
             int[][] fr = new int[n][];
@@ -741,11 +741,76 @@ public class CameraToolsPlugin extends Plugin {
             }
             if (used < 2) return null;
             if (used < n) fr = java.util.Arrays.copyOf(fr, used);
-            int[] merged = SuperRes.merge(fr, w, h, 1f, w, h, this::progress);
+            int[] merged = SuperRes.merge(fr, w, h, 1f, w, h, this::progress, tone);
             fr = null;
             return Bitmap.createBitmap(merged, w, h, Bitmap.Config.ARGB_8888);
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** 未壓縮 YUV 連拍 → ARGB → 對齊合成(可帶夜景色調)。邊轉換邊釋放 NV21 以節省記憶體。 */
+    private Bitmap mergeNv21(java.util.List<byte[]> nv, int w, int h, SuperRes.Tone tone) {
+        int n = nv.size();
+        int[][] fr = new int[n][];
+        for (int i = 0; i < n; i++) {
+            progress("轉換影格 " + (i + 1) + "/" + n);
+            fr[i] = YuvUtil.nv21ToArgb(nv.get(i), w, h);
+            nv.set(i, null);
+        }
+        int[] out = null;
+        if (n > 1) {
+            try {
+                out = SuperRes.merge(fr, w, h, 1f, w, h, this::progress, tone);
+            } catch (Throwable t) {
+                progress("合成失敗(" + t.getClass().getSimpleName() + "),改用第一張");
+            }
+        }
+        if (out == null) {
+            out = fr[0];
+            if (tone instanceof YuvUtil.NightTone) ((YuvUtil.NightTone) tone).applyArgb(out);
+        }
+        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888);
+    }
+
+    /** RAW 連拍 → Bayer 對齊合成 → DNG(+ 可選顯影成 JPEG)。在處理佇列執行。 */
+    private void rawMergeJob(NativeShot.Result s, String prefix, int quality, double cropAspect, double cropZoom,
+                             LookMath.Params params, boolean keepOriginal, boolean develop, JSObject done) throws IOException {
+        int w = s.rawW, h = s.rawH;
+        short[][] fr = s.rawFrames.toArray(new short[0][]);
+        s.rawFrames.clear();
+        short[] m = fr.length > 1 ? RawMerge.merge(fr, w, h, s.black, s.white, s.noiseS, s.noiseO, this::progress) : fr[0];
+        fr = null;
+        progress("寫入合成 DNG");
+        java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(w * h * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        bb.asShortBuffer().put(m);
+        m = null;
+        android.hardware.camera2.DngCreator dc = new android.hardware.camera2.DngCreator(s.cc, s.capResult);
+        dc.setOrientation(s.dngOrientation);
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(w * h * 2 + (1 << 20));
+        dc.writeByteBuffer(bos, new Size(w, h), bb, 0);
+        dc.close();
+        bb = null;
+        byte[] dng = bos.toByteArray();
+        bos = null;
+        Uri du = writeDng(prefix, dng);
+        done.put("rawUri", du.toString());
+        done.put("hasRaw", true);
+        if (develop) {
+            progress("RAW 顯影");
+            RawDev.Dng d = RawDev.parse(dng);
+            dng = null;
+            Bitmap bmp = RawDev.develop(d, false, 0f, new float[]{1f, 1f, 1f});
+            JSObject fin = finishAndSave(bmp, prefix, quality, cropAspect, cropZoom, params, keepOriginal);
+            done.put("uri", fin.getString("uri"));
+            done.put("width", fin.getInt("width"));
+            done.put("height", fin.getInt("height"));
+            done.put("megapixels", fin.getDouble("megapixels"));
+        } else {
+            done.put("uri", du.toString());
+            done.put("width", w);
+            done.put("height", h);
+            done.put("megapixels", w * (double) h / 1e6);
         }
     }
 
@@ -768,6 +833,13 @@ public class CameraToolsPlugin extends Plugin {
         r.jpegQuality = q == null ? 95 : q;
         r.torch = Boolean.TRUE.equals(call.getBoolean("torch", false));
         r.burst = Math.max(1, Math.min(8, call.getInt("burst", 1)));
+        r.preferYuv = Boolean.TRUE.equals(call.getBoolean("preferYuv", false)) && r.burst > 1 && !r.raw;
+        final int rawBurstN = Math.max(1, Math.min(8, call.getInt("rawBurst", 1)));
+        final boolean rawDevelop = r.raw && rawBurstN > 1 && r.jpeg;
+        if (r.raw && rawBurstN > 1) { r.rawBurst = rawBurstN; r.jpeg = false; }   // JPEG 改由合成後的 RAW 顯影
+        final boolean night = Boolean.TRUE.equals(call.getBoolean("night", false));
+        Double nev = call.getDouble("nightEv", -1.0);
+        final float nightGain = night ? (float) Math.pow(2, -Math.min(0, nev == null ? -1.0 : nev)) : 1f;
         r.halNr = Math.max(0, Math.min(4, call.getInt("halNr", 0)));
         Double zz = call.getDouble("zoom", 1.0);
         r.zoom = zz == null ? 1f : zz.floatValue();
@@ -807,7 +879,29 @@ public class CameraToolsPlugin extends Plugin {
                 }
                 res.put("hasRaw", s.dng != null);
                 res.put("notes", s.notes.toString());
-                if (s.jpeg == null) {
+                if (!s.rawFrames.isEmpty() && s.cc != null && s.capResult != null) {
+                    // RAW 多張合成:拍完先回傳,對齊合成/寫 DNG/顯影在背景佇列
+                    res.put("queued", true);
+                    res.put("job", jobId);
+                    res.put("rawMerge", s.rawFrames.size());
+                    call.resolve(res);
+                    exec.execute(() -> {
+                        JSObject done = new JSObject();
+                        done.put("job", jobId);
+                        done.put("auto", false);
+                        try {
+                            mirrorFlag = mirror;
+                            targetMpFlag = zoomOutMp;
+                            nnFlag = nnF; nnMix = nnM; dnLuma = dL; dnChroma = dC; dnShadow = dS; sharpAmt = sh;
+                            rawMergeJob(s, "RAWMF", r.jpegQuality, cropAspect, cropZoom, params, keepOriginal, rawDevelop, done);
+                        } catch (Throwable t) {
+                            done.put("error", msg(t));
+                        }
+                        notifyListeners("jobDone", done);
+                    });
+                    return;
+                }
+                if (s.jpeg == null && s.nv21.isEmpty()) {
                     if (res.has("rawUri")) {
                         res.put("uri", res.getString("rawUri"));
                         res.put("width", s.width);
@@ -831,7 +925,7 @@ public class CameraToolsPlugin extends Plugin {
                         targetMpFlag = zoomOutMp;
                         nnFlag = nnF; nnMix = nnM; dnLuma = dL; dnChroma = dC; dnShadow = dS; sharpAmt = sh;
                         progress("處理 JPEG");
-                        int orientation = orientationOf(new ByteArrayInputStream(s.jpeg));
+                        int orientation = s.jpeg != null ? orientationOf(new ByteArrayInputStream(s.jpeg)) : ExifInterface.ORIENTATION_NORMAL;
                         if (s.yuv) {
                             orientation = s.jpegOrientationDeg == 90 ? ExifInterface.ORIENTATION_ROTATE_90
                                     : s.jpegOrientationDeg == 180 ? ExifInterface.ORIENTATION_ROTATE_180
@@ -839,12 +933,25 @@ public class CameraToolsPlugin extends Plugin {
                                     : ExifInterface.ORIENTATION_NORMAL;
                         }
                         Bitmap bmp = null;
-                        if (s.frames.size() > 1) {
-                            bmp = mergeBurst(s.frames);
+                        final YuvUtil.NightTone tone = night ? new YuvUtil.NightTone(nightGain) : null;
+                        if (!s.nv21.isEmpty()) {
+                            bmp = mergeNv21(s.nv21, s.yuvW, s.yuvH, tone);
+                        } else if (s.frames.size() > 1) {
+                            bmp = mergeBurst(s.frames, tone);
                             if (bmp == null) done.put("note", "連拍合成失敗,改存第一張");
                         }
-                        if (bmp == null) bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
-                        if (bmp == null) throw new IOException("JPEG 解碼失敗");
+                        if (bmp == null) {
+                            bmp = BitmapFactory.decodeByteArray(s.jpeg, 0, s.jpeg.length);
+                            if (bmp == null) throw new IOException("JPEG 解碼失敗");
+                            if (tone != null) {
+                                int bw = bmp.getWidth(), bh = bmp.getHeight();
+                                int[] px = new int[bw * bh];
+                                bmp.getPixels(px, 0, bw, 0, 0, bw, bh);
+                                tone.applyArgb(px);
+                                bmp = ensureMutable(bmp);
+                                bmp.setPixels(px, 0, bw, 0, 0, bw, bh);
+                            }
+                        }
                         bmp = applyOrientation(bmp, orientation);
                         double residual = s.appliedZoom > 1.01f ? Math.max(1.0, r.zoom / s.appliedZoom) : cropZoom;
                         JSObject fin = finishAndSave(bmp, prefix, r.jpegQuality, cropAspect, residual, params, keepOriginal);

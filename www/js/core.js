@@ -65,6 +65,9 @@ A.DEFAULTS = {
   rawOn: false,
   selfieMirror: true,
   zoomOutMp: 9,
+  nightFrames: 6,          // 夜景模式連拍張數
+  nightEv: -1,             // 夜景模式每張壓暗的 EV(合成後再提亮)
+  yuvBurst: true,          // 連拍用未壓縮 YUV 影格
   lensLock: false,
   nativePreview: true,
   enhProfiles: [],       // 自訂畫質設定檔 [{id,name,enh}]

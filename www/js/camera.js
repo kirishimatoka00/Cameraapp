@@ -10,7 +10,7 @@ const S = A.S = {
   stream: null, track: null, capture: null, caps: {}, photoCaps: null,
   Z: 1, within: 1, cssZoom: 1,
   lightMode: 'off',
-  mode: 'photo',               // photo | manual | video
+  mode: 'photo',               // night | photo | manual | video
   ev: 0,
   man: { exp: false, t: null, iso: null },  // 手動曝光
   focusManual: false, focusDist: null,
@@ -915,7 +915,7 @@ A.setMode = async (m) => {
   document.querySelectorAll('#modeTabs button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
   $('videoOpts').hidden = m !== 'video';
   $('btnShutter').setAttribute('aria-label', m === 'video' ? '錄影' : '拍照');
-  $('btnHdr').hidden = m === 'video';
+  $('btnHdr').hidden = m === 'video' || m === 'night';
   $('btnEnh').hidden = m === 'video';
   A.updateRatioChip();
   if (prev === 'manual' && m !== 'manual') {
