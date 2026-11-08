@@ -429,6 +429,7 @@ public class CameraToolsPlugin extends Plugin {
                 boolean rawCap = false;
                 if (caps != null) for (int c : caps) if (c == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW) rawCap = true;
                 o.put("raw", rawCap);
+                o.put("ois", Ois.available(cc));
 
                 JSArray phys = new JSArray();
                 if (Build.VERSION.SDK_INT >= 28) {
@@ -878,6 +879,8 @@ public class CameraToolsPlugin extends Plugin {
         Double nev = call.getDouble("nightEv", -1.0);
         final float nightGain = night ? (float) Math.pow(2, -Math.min(0, nev == null ? -1.0 : nev)) : 1f;
         r.halNr = Math.max(0, Math.min(4, call.getInt("halNr", 0)));
+        r.ois = !Boolean.FALSE.equals(call.getBoolean("ois", true));
+        r.steadyMs = Math.max(0, Math.min(2000, call.getInt("steadyMs", 0)));
         Double zz = call.getDouble("zoom", 1.0);
         r.zoom = zz == null ? 1f : zz.floatValue();
         Double fu = call.getDouble("focusU", -1.0), fv = call.getDouble("focusV", -1.0);
@@ -1460,9 +1463,11 @@ public class CameraToolsPlugin extends Plugin {
                 v.setInitialZoom((float) zoom, torch);
                 np = v;
                 v.setStable(focusStable);
+                v.ois = !Boolean.FALSE.equals(call.getBoolean("ois", true));
                 v.start(getBridge().getWebView());
                 JSObject r = new JSObject();
                 r.put("size", v.info);
+                r.put("ois", v.oisOn);
                 try { r.put("caps", new JSObject(v.caps().toString())); } catch (Throwable ignored) { }
                 call.resolve(r);
             } catch (Throwable t) {
@@ -1570,6 +1575,7 @@ public class CameraToolsPlugin extends Plugin {
         c.bitrate = call.getInt("bitrate", 20000000);
         c.audio = Boolean.TRUE.equals(call.getBoolean("audio", true));
         c.mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
+        c.ois = !Boolean.FALSE.equals(call.getBoolean("ois", true));
         c.left = call.getInt("left", 0);
         c.top = call.getInt("top", 0);
         c.w = call.getInt("w", 0);

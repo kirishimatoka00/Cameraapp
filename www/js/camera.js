@@ -193,6 +193,7 @@ async function startNativePrev(L) {
     const r0 = await A.needNative().startNativePreview(Object.assign({
       cameraId: String(L.nativeId), zoom: Math.max(1, S.within || 1),
       mirror: !!(S.front && A.settings.selfieMirror), torch: S.lightMode === 'torch',
+      ois: A.settings.ois !== false,
     }, rc));
     S.nativePrev = true;
     S.nativePrevKey = [rc.left, rc.top, rc.w, rc.h].join(',');

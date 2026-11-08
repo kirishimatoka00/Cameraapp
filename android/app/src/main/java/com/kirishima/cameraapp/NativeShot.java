@@ -52,6 +52,8 @@ final class NativeShot {
         float focusU = -1f, focusV = -1f;   // 對焦點(直立畫面 0..1),<0 = 畫面中央
         boolean preferYuv;        // 連拍優先用未壓縮 YUV(避免每張先壓成 JPEG)
         int rawBurst = 1;         // >1 = RAW 連拍,供 RAW 多張合成
+        boolean ois = true;       // 光學防手震
+        int steadyMs = 0;         // >0 = 按快門前最多等這麼久,直到手穩(陀螺儀)
     }
 
     static final class Result {
@@ -110,6 +112,7 @@ final class NativeShot {
     private Result run() throws IOException {
         ht.start();
         h = new Handler(ht.getLooper());
+        startGyro();
         try {
             CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
             try {
@@ -126,6 +129,7 @@ final class NativeShot {
                     java.util.Set<String> ph = cc.getPhysicalCameraIds();
                     if (ph != null && !ph.isEmpty()) res.notes.append(" 實體").append(ph);
                 }
+                if (!Ois.available(cc) && req.ois) res.notes.append("此鏡頭未回報光學防手震;");
                 res.notes.append(";");
             }
 
@@ -357,6 +361,7 @@ final class NativeShot {
                     gotResult.countDown(); gotJpeg.countDown(); gotRaw.countDown();
                 }
             };
+            waitSteady();
             // 一次送出整組連拍(影格間隔最短,手震位移小、對齊更準)
             wantFrames = shots;
             res.frames.clear();
@@ -653,6 +658,7 @@ final class NativeShot {
             b.set(CaptureRequest.LENS_FOCUS_DISTANCE, diopter);
         }
         if (req.torch) b.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
+        Ois.apply(cc, b, req.ois);   // 預覽/對焦/拍攝全程開著,拍攝時鏡片已在穩定狀態
         applyZoomCrop(b);
     }
 
@@ -697,8 +703,6 @@ final class NativeShot {
             b.set(CaptureRequest.HOT_PIXEL_MODE, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY);
         if (has(cc.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES), CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY))
             b.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY);
-        if (has(cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION), CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON))
-            b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON);
         b.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_STILL_CAPTURE);
     }
 
@@ -775,7 +779,47 @@ final class NativeShot {
         return best != null ? best : a[a.length - 1];
     }
 
+    // ---- 穩定快門:陀螺儀角速度夠小才按下(手按快門那一下的晃動最大)
+    private android.hardware.SensorManager gsm;
+    private android.hardware.SensorEventListener gsl;
+    private volatile long lastShake = 0;
+    private volatile boolean gyroOk = false;
+
+    private void startGyro() {
+        if (req.steadyMs <= 0) return;
+        try {
+            gsm = (android.hardware.SensorManager) ctx.getSystemService(Context.SENSOR_SERVICE);
+            android.hardware.Sensor g = gsm == null ? null : gsm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE);
+            if (g == null) return;
+            // 望遠視角窄,同樣的晃動在畫面上更明顯 → 門檻隨倍率變嚴
+            final float thr = 0.05f / Math.max(1f, Math.min(4f, req.zoom));
+            lastShake = android.os.SystemClock.uptimeMillis();
+            gsl = new android.hardware.SensorEventListener() {
+                @Override public void onSensorChanged(android.hardware.SensorEvent e) {
+                    gyroOk = true;
+                    float w = (float) Math.sqrt(e.values[0] * e.values[0] + e.values[1] * e.values[1] + e.values[2] * e.values[2]);
+                    if (w > thr) lastShake = android.os.SystemClock.uptimeMillis();
+                }
+                @Override public void onAccuracyChanged(android.hardware.Sensor s, int a) { }
+            };
+            gsm.registerListener(gsl, g, android.hardware.SensorManager.SENSOR_DELAY_FASTEST, h);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void waitSteady() throws InterruptedException {
+        if (req.steadyMs <= 0 || gsl == null || !gyroOk) return;
+        long t0 = android.os.SystemClock.uptimeMillis();
+        while (true) {
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastShake >= 120) break;                    // 連續 0.12 秒穩定
+            if (now - t0 >= req.steadyMs) { res.notes.append("手一直在晃,已等 ").append(req.steadyMs).append("ms 後直接拍;"); break; }
+            Thread.sleep(10);
+        }
+    }
+
     private void cleanup() {
+        try { if (gsm != null && gsl != null) gsm.unregisterListener(gsl); } catch (Throwable ignored) { }
         try { if (session != null) session.close(); } catch (Throwable ignored) { }
         try { if (cam != null) cam.close(); } catch (Throwable ignored) { }
         try { if (rawImage != null) rawImage.close(); } catch (Throwable ignored) { }

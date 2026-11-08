@@ -53,6 +53,7 @@ import java.util.concurrent.TimeUnit;
  */
 final class NativeVideo {
     static final class Cfg {
+        boolean ois = true;
         String cameraId;
         int width, height, fps, bitrate;
         boolean audio = true, torch, mirror;
@@ -216,6 +217,7 @@ final class NativeVideo {
                 }
             }
             if (cfg.torch) builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
+            Ois.apply(cc, builder, cfg.ois);
             applyZoomTo(builder);
             session.setRepeatingRequest(builder.build(), null, h);
             rec.start();

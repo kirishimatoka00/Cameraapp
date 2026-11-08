@@ -136,6 +136,8 @@ async function shootNative(opts, rawWanted, night) {
     burst: rawWanted ? 1 : (night ? Math.max(2, st.nightFrames || 6) : enhBurst),
     rawBurst: rawWanted ? enhBurst : 1,
     preferYuv: st.yuvBurst !== false,
+    ois: st.ois !== false,
+    steadyMs: st.steadyShutter !== false ? 800 : 0,
     night: !!night,
     nightEv,
     focusU: S.lastFocus ? S.lastFocus.u : -1,

@@ -65,7 +65,9 @@ A.DEFAULTS = {
   rawOn: false,
   selfieMirror: true,
   zoomOutMp: 9,
-  focusStable: true,       // 望遠(原生預覽)對焦穩定
+  focusStable: true,
+  ois: true,               // 光學防手震(鏡頭有回報才會生效)
+  steadyShutter: true,     // 穩定快門:手穩了才按下(最多等 0.8 秒)       // 望遠(原生預覽)對焦穩定
   nightFrames: 6,          // 夜景模式連拍張數
   nightEv: -1,             // 夜景模式每張壓暗的 EV(合成後再提亮)
   yuvBurst: true,          // 連拍用未壓縮 YUV 影格

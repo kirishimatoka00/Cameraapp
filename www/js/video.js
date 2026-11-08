@@ -93,6 +93,7 @@ async function start() {
   let info;
   try {
     info = await N.startNativeVideo({
+      ois: A.settings.ois !== false,
       cameraId: String(L.dev.id),
       width: r.w, height: r.h, fps: st.videoFps,
       bitrate: Math.round(r.bps * (st.videoFps >= 60 ? 1.5 : 1)),

@@ -31,7 +31,7 @@ function renderCamList() {
       (d.eq ? ' · 約 ' + Math.round(d.eq) + 'mm(35mm 等效)' : '') +
       (d.native && d.native.sensorMp ? ' · ' + d.native.sensorMp.toFixed(1) + 'MP' : '') +
       (d.aperture ? ' · f/' + d.aperture.toFixed(1) : '') +
-      (d.native && d.native.raw ? ' · RAW' : '') +
+      (d.native && d.native.raw ? ' · RAW' : '') + (d.native && d.native.ois ? ' · OIS' : '') +
       (d.usable ? '' : ' · 不可用') +
       (role ? ' <span class="role">→ ' + role + '</span>' : '');
     box.appendChild(div);
@@ -40,7 +40,7 @@ function renderCamList() {
     const div = document.createElement('div');
     const roleNat = Object.entries(S.lens).filter(([, l]) => l.nativeId === n.id).map(([k]) => A.ROLE_LABEL[k]).join('/');
     div.innerHTML = '#' + n.id + (n.facing === 'back' ? ' 後' : n.facing === 'front' ? ' 前' : '') +
-      (n.equivMm ? ' · 約 ' + Math.round(n.equivMm) + 'mm' : '') + (n.raw ? ' · RAW' : '') +
+      (n.equivMm ? ' · 約 ' + Math.round(n.equivMm) + 'mm' : '') + (n.raw ? ' · RAW' : '') + (n.ois ? ' · OIS' : '') +
       (n.hidden ? ' · 隱藏鏡頭(系統未列出,可由原生嘗試開啟)' : ' · WebView 看不到,僅能原生使用') +
       (roleNat ? ' <span class="role">→ ' + roleNat + '(原生)</span>' : '');
     box.appendChild(div);
@@ -67,6 +67,8 @@ function sync() {
   $('setHdrCount').value = String(st.hdrCount);
   $('setNightFrames').value = String(st.nightFrames);
   $('setFocusStable').checked = st.focusStable !== false;
+  $('setOis').checked = st.ois !== false;
+  $('setSteady').checked = st.steadyShutter !== false;
   $('setNightEv').value = String(st.nightEv);
   $('setYuvBurst').checked = st.yuvBurst !== false;
   $('setHdrRange').value = String(st.hdrRange);
@@ -144,6 +146,8 @@ A.bindSettings = () => {
   $('setFaceAuto').onchange = (e) => { st.faceAuto = e.target.checked; A.saveSettings(); };
 
   $('setHdrOn').onchange = (e) => { st.hdrOn = e.target.checked; A.saveSettings(); A.refreshHdrChip(); };
+  $('setOis').onchange = (e) => { st.ois = e.target.checked; A.saveSettings(); A.toast('下次開啟鏡頭時生效', 1800); };
+  $('setSteady').onchange = (e) => { st.steadyShutter = e.target.checked; A.saveSettings(); };
   $('setFocusStable').onchange = (e) => {
     st.focusStable = e.target.checked; A.saveSettings();
     if (A.CT()) A.CT().setFocusStable({ on: st.focusStable }).catch(() => {});

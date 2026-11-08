@@ -224,6 +224,7 @@ final class NativePreview {
             builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
             if (torch) builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_TORCH);
+            oisOn = Ois.apply(cc, builder, ois);
             applyZoom();
             applyControls();
             session.setRepeatingRequest(builder.build(), cb, h);
@@ -458,6 +459,9 @@ final class NativePreview {
         } catch (Throwable ignored) {
         }
     }
+
+    volatile boolean ois = true;
+    volatile boolean oisOn = false;
 
     void setStable(boolean on) {
         stable = on;
