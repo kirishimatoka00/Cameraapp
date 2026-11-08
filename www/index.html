@@ -53,7 +53,7 @@
     <button class="tb" id="btnGrid"></button>
     <button class="tb" id="btnFocusAssist"></button>
     <button class="tb" id="btnProfile"></button>
-    <button class="tb" id="btnColor" aria-label="色彩與白平衡"></button>
+    <button class="tb" id="btnColor" aria-label="白平衡"></button>
     <div id="lensTag" class="tag">—</div>
   </header>
 
@@ -106,7 +106,7 @@
 <div id="colorSheet" class="sheet" hidden>
   <div class="sheet-card"><div class="grabber"></div>
     <div class="sheet-head">
-      <h2>色彩與白平衡</h2>
+      <h2>白平衡</h2>
       <button class="mini" id="csReset">重設</button>
       <button class="icon-btn small" id="csClose" aria-label="關閉">✕</button>
     </div>
@@ -134,11 +134,14 @@
     </div>
     <div class="sheet-body">
       <div class="profile-list" id="profileList"></div>
+      <div class="k-row" style="justify-content:space-between"><span>細部調整:<b id="psCurName" style="color:var(--text)"></b></span><button class="mini" id="btnRevertProfile">還原</button></div>
+      <div id="psCtrl"></div>
+      <button class="act" id="btnUpdateProfile">更新此檔案</button>
       <div class="inline">
-        <input type="text" id="profileName" class="txt" placeholder="自訂檔案名稱">
-        <button class="act small" id="btnSaveProfile">儲存目前設定</button>
+        <input type="text" id="profileName" class="txt" placeholder="新檔案名稱">
+        <button class="act small" id="btnSaveProfile">存成新檔案</button>
       </div>
-      <p class="note">自訂檔案會記住目前的 EV、對比、亮部、陰影、飽和度、色調、色溫、白平衡與細節增強,可在設定頁匯出。</p>
+      <p class="note">色彩檔案記住亮度、對比、亮部細節、陰影、飽和度與細節增強;白平衡(含色溫、色調、自訂 K、灰點)在頂列的白平衡另外設定,切換色彩檔案不會改動白平衡。點滑桿名稱兩下可歸零。可在設定頁匯出。</p>
     </div>
   </div>
 </div>

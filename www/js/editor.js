@@ -166,7 +166,7 @@ function toolColor(p) {
   const fillChips = () => {
     chips.innerHTML = '';
     A.allProfiles().forEach((pr) => {
-      chips.appendChild(btn(pr.name, 'mini', () => { E.look = A.cloneLook(pr.look); E.ctrl.refresh(); schedule(); }));
+      chips.appendChild(btn(pr.name, 'mini', () => { E.look = A.mergeProfile(E.look, pr.look); E.ctrl.refresh(); schedule(); }));
     });
   };
   fillChips();

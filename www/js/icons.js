@@ -19,6 +19,7 @@
     flash: '<path d="M13.5 3 6 13h5.5l-1 8L18 11h-5.5l1-8z"/>',
     torch: '<path d="M8 3h8v4l-2 3v11h-4V10L8 7z"/><path d="M8 7h8M12 13v2"/>',
     hdr: '<rect x="2.5" y="6" width="19" height="12" rx="3"/><text x="12" y="15" text-anchor="middle" font-size="7.4" font-weight="700" font-family="Roboto,Arial,sans-serif" fill="currentColor" stroke="none">HDR</text>',
+    wb: '<rect x="2.5" y="6" width="19" height="12" rx="3"/><text x="12" y="15" text-anchor="middle" font-size="7.6" font-weight="700" font-family="Roboto,Arial,sans-serif" fill="currentColor" stroke="none">WB</text>',
     raw: '<rect x="2.5" y="6" width="19" height="12" rx="3"/><text x="12" y="15" text-anchor="middle" font-size="7.4" font-weight="700" font-family="Roboto,Arial,sans-serif" fill="currentColor" stroke="none">RAW</text>',
     sparkle: '<path d="M11 3.5l1.9 5.1 5.1 1.9-5.1 1.9L11 17.5l-1.9-5.1L4 10.5l5.1-1.9z"/><path d="M18 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>',
     grid: '<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17"/>',
@@ -60,7 +61,7 @@
 
   // 靜態圖示
   const $ = (id) => document.getElementById(id);
-  const stat = { btnSettings: ['gear', '設定'], btnLight: ['flashOff', '閃光燈:關'], btnGrid: ['grid', '格線'], btnColor: ['palette', '色彩與白平衡'],
+  const stat = { btnSettings: ['gear', '設定'], btnLight: ['flashOff', '閃光燈:關'], btnGrid: ['grid', '格線'], btnColor: ['wb', '白平衡'],
     btnProfile: ['filter', '色彩檔案'], btnFlip: ['flip', '切換前後鏡頭'], btnHdr: ['hdr', 'HDR'], btnEnh: ['sparkle', '畫質提升'], btnFocusAssist: ['focus', '對焦模式'],
     btnRaw: ['raw', 'RAW'],
     gBack: ['back', '返回'], vClose: ['back', '返回'], vPrev: ['prev', '較舊'], vNext: ['next', '較新'], eBack: ['back', '返回'], sClose: ['back', '返回'],

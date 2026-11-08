@@ -184,13 +184,24 @@ A.updatePreviewFilter = (p) => {
 
 /* ------------------------------------------------------------------ 色彩檔案 */
 
+/* 色彩檔案只管「風格」;白平衡(模式、K 值、灰點、色溫/色調微調)獨立設定,套用色彩檔案不會改動白平衡 */
+A.PROFILE_KEYS = ['ev', 'contrast', 'highlights', 'shadows', 'saturation', 'detail'];
+A.WB_KEYS = ['wbMode', 'kelvin', 'gains', 'temperature', 'tint'];
+A.profilePart = (look) => {
+  const o = {};
+  A.PROFILE_KEYS.forEach((k) => { o[k] = (look && typeof look[k] === 'number') ? look[k] : 0; });
+  return o;
+};
+A.profileSame = (a, b) => A.PROFILE_KEYS.every((k) => (+((a || {})[k]) || 0) === (+((b || {})[k]) || 0));
+A.wbIsDefault = (look) => look.wbMode === 'auto' && !look.temperature && !look.tint;
+
 A.BUILTIN_PROFILES = [
   { id: 'standard', name: '標準', builtin: true, look: {} },
   { id: 'vivid', name: '鮮豔', builtin: true, look: { contrast: 15, saturation: 30, detail: 15 } },
   { id: 'soft', name: '柔和', builtin: true, look: { contrast: -15, saturation: -10, highlights: -15, shadows: 15 } },
-  { id: 'portrait', name: '人像', builtin: true, look: { contrast: -5, saturation: 8, temperature: 6, shadows: 10 } },
-  { id: 'cinema', name: '電影', builtin: true, look: { contrast: 12, saturation: -15, temperature: -8, tint: 5, highlights: -20, shadows: 10 } },
-  { id: 'retro', name: '復古', builtin: true, look: { contrast: -10, saturation: -20, temperature: 20, tint: 8, shadows: 8 } },
+  { id: 'portrait', name: '人像', builtin: true, look: { contrast: -5, saturation: 8, shadows: 10, highlights: -5 } },
+  { id: 'cinema', name: '電影', builtin: true, look: { contrast: 12, saturation: -15, highlights: -20, shadows: 10 } },
+  { id: 'retro', name: '復古', builtin: true, look: { contrast: -10, saturation: -20, shadows: 8, ev: 0.1 } },
   { id: 'mono', name: '黑白', builtin: true, look: { saturation: -100, contrast: 20, detail: 20 } },
 ];
 A.allProfiles = () => A.BUILTIN_PROFILES.concat(A.settings.profiles);
@@ -204,16 +215,25 @@ A.setCurrentLook = (look, profileId) => {
   A.saveSettings();
   document.dispatchEvent(new CustomEvent('lookchange'));
 };
+/** 把色彩檔案的風格套到 look 上(保留 look 的白平衡) */
+A.mergeProfile = (look, prLook) => Object.assign(A.cloneLook(look), A.profilePart(prLook));
 A.applyProfile = (id) => {
   const pr = A.findProfile(id);
   if (!pr) return;
-  A.setCurrentLook(A.cloneLook(pr.look), id);
+  A.setCurrentLook(A.mergeProfile(A.currentLook(), pr.look), id);
 };
 A.saveCustomProfile = (name, look) => {
   const id = 'c' + Date.now().toString(36);
-  A.settings.profiles.push({ id, name, look: A.cloneLook(look) });
+  A.settings.profiles.push({ id, name, look: A.profilePart(look) });
   A.saveSettings();
   return id;
+};
+A.updateCustomProfile = (id, look) => {
+  const p = A.settings.profiles.find((q) => q.id === id);
+  if (!p) return false;
+  p.look = A.profilePart(look);
+  A.saveSettings();
+  return true;
 };
 A.deleteCustomProfile = (id) => {
   A.settings.profiles = A.settings.profiles.filter((p) => p.id !== id);

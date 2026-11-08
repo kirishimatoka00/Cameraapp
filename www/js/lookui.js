@@ -16,14 +16,16 @@ const WB_PRESETS = [
 ];
 A.WB_PRESETS = WB_PRESETS;
 
-const SLIDERS = [
-  { key: 'ev', name: 'EV', min: -3, max: 3, step: 0.1, fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(1) },
+const WB_SLIDERS = [
+  { key: 'temperature', name: '色溫微調', min: -100, max: 100, step: 1 },
+  { key: 'tint', name: '色調微調', min: -100, max: 100, step: 1 },
+];
+const PROFILE_SLIDERS = [
+  { key: 'ev', name: '亮度', min: -3, max: 3, step: 0.1, fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(1) },
   { key: 'contrast', name: '對比', min: -100, max: 100, step: 1 },
   { key: 'highlights', name: '亮部細節', min: -100, max: 100, step: 1 },
   { key: 'shadows', name: '陰影', min: -100, max: 100, step: 1 },
   { key: 'saturation', name: '飽和度', min: -100, max: 100, step: 1 },
-  { key: 'tint', name: '色調', min: -100, max: 100, step: 1 },
-  { key: 'temperature', name: '色溫', min: -100, max: 100, step: 1 },
   { key: 'detail', name: '細節增強', min: 0, max: 100, step: 1 },
 ];
 
@@ -51,7 +53,7 @@ A.wbLabel = (look) => {
 
 /**
  * 在 container 內建立 Look 控制項。
- * opts: { get(): Look, set(look), pickGray(cb): 啟動灰點取樣 }
+ * opts: { get(): Look, set(look), pickGray(cb): 啟動灰點取樣, parts: 'wb' | 'profile' | 'all'(預設) }
  * 回傳 { refresh() }
  */
 A.buildLookControls = (container, opts) => {
@@ -59,6 +61,9 @@ A.buildLookControls = (container, opts) => {
   const root = document.createElement('div');
   root.className = 'look-ctrl';
   container.appendChild(root);
+  const parts = opts.parts || 'all';
+  const showWb = parts !== 'profile', showProf = parts !== 'wb';
+  const SLIDERS = (showWb ? WB_SLIDERS : []).concat(showProf ? PROFILE_SLIDERS : []);
 
   // 白平衡
   const wbBox = document.createElement('div');
@@ -71,7 +76,7 @@ A.buildLookControls = (container, opts) => {
   kRow.style.marginTop = '10px';
   kRow.innerHTML = '<span class="n" style="width:54px">色溫 K</span><input type="range" min="2000" max="10000" step="100"><span class="v" style="width:54px;text-align:right;font:12px var(--mono);color:var(--text)"></span>';
   wbBox.appendChild(kRow);
-  root.appendChild(wbBox);
+  if (showWb) root.appendChild(wbBox);
   const kInput = kRow.querySelector('input');
   const kVal = kRow.querySelector('.v');
 
@@ -125,6 +130,11 @@ A.buildLookControls = (container, opts) => {
       }
       last = now;
     };
+    if (showProf && s.key === 'ev' && showWb) {
+      const h = document.createElement('div');
+      h.className = 'k-row'; h.style.marginTop = '6px'; h.textContent = '風格';
+      root.appendChild(h);
+    }
     root.appendChild(row);
     rows[s.key] = { inp, val, fmt };
   });
@@ -156,21 +166,18 @@ A.buildLookControls = (container, opts) => {
 
 A.profileLabel = () => {
   const pr = A.findProfile(A.settings.profileId);
-  const name = pr ? pr.name : '自訂';
-  let mod = false;
-  if (pr) {
-    const a = JSON.stringify(A.cloneLook(pr.look)), b = JSON.stringify(A.cloneLook(A.settings.look));
-    mod = a !== b;
-  } else mod = true;
-  return name + (mod && pr ? '*' : '');
+  if (!pr) return '自訂';
+  return pr.name + (A.profileSame(pr.look, A.settings.look) ? '' : '*');
 };
 
 A.initLookUI = () => {
+  // ---- 白平衡(獨立於色彩檔案)
   const sheet = $('colorSheet');
   let ctrl = null;
   const openColor = () => {
     if (!ctrl) {
       ctrl = A.buildLookControls($('csBody'), {
+        parts: 'wb',
         get: () => A.currentLook(),
         set: (l) => A.setCurrentLook(l),
         pickGray: (cb) => {
@@ -188,13 +195,24 @@ A.initLookUI = () => {
   $('csClose').onclick = () => A.closeOverlay(sheet);
   sheet.addEventListener('click', (e) => { if (e.target === sheet) A.closeOverlay(sheet); });
   $('csReset').onclick = () => {
-    const pr = A.findProfile(A.settings.profileId);
-    A.setCurrentLook(A.cloneLook(pr ? pr.look : {}));
+    const l = A.currentLook();
+    l.wbMode = 'auto'; l.kelvin = 5500; l.gains = [1, 1, 1]; l.temperature = 0; l.tint = 0;
+    A.setCurrentLook(l);
     if (ctrl) ctrl.refresh();
   };
 
-  // 色彩檔案
+  // ---- 色彩檔案:選檔案 → 細部調整 → 更新/另存
   const ps = $('profileSheet');
+  let pctrl = null;
+  const curProfile = () => A.findProfile(A.settings.profileId);
+  const refreshActions = () => {
+    const pr = curProfile();
+    const mod = pr ? !A.profileSame(pr.look, A.settings.look) : true;
+    $('psCurName').textContent = (pr ? pr.name : '自訂') + (mod && pr ? '(已修改)' : '');
+    $('btnUpdateProfile').disabled = !pr || pr.builtin || !mod;
+    $('btnUpdateProfile').textContent = pr && pr.builtin ? '內建檔案不能覆寫' : '更新「' + (pr ? pr.name : '') + '」';
+    $('btnRevertProfile').disabled = !pr || !mod;
+  };
   const renderProfiles = () => {
     const box = $('profileList');
     box.innerHTML = '';
@@ -202,25 +220,55 @@ A.initLookUI = () => {
       const b = document.createElement('div');
       b.className = 'pchip' + (p.id === A.settings.profileId ? ' on' : '');
       b.textContent = p.name;
-      b.onclick = () => { A.applyProfile(p.id); renderProfiles(); };
+      b.onclick = () => { A.applyProfile(p.id); renderProfiles(); if (pctrl) pctrl.refresh(); };
       if (!p.builtin) {
         const d = document.createElement('span');
         d.className = 'del'; d.textContent = '✕';
         d.onclick = (e) => {
           e.stopPropagation();
-          if (confirm('刪除色彩檔案「' + p.name + '」?')) { A.deleteCustomProfile(p.id); renderProfiles(); updateChips(); }
+          if (confirm('刪除色彩檔案「' + p.name + '」?')) {
+            A.deleteCustomProfile(p.id);
+            if (A.settings.profileId === 'standard') A.applyProfile('standard');
+            renderProfiles(); updateChips(); if (pctrl) pctrl.refresh();
+          }
         };
         b.appendChild(d);
       }
       box.appendChild(b);
     });
+    refreshActions();
   };
   A.renderProfiles = renderProfiles;
-  const openProfiles = () => { renderProfiles(); A.openOverlay(ps); };
+  const openProfiles = () => {
+    if (!pctrl) {
+      pctrl = A.buildLookControls($('psCtrl'), {
+        parts: 'profile',
+        get: () => A.currentLook(),
+        set: (l) => { A.setCurrentLook(l); refreshActions(); },
+      });
+    }
+    pctrl.refresh();
+    renderProfiles();
+    A.openOverlay(ps);
+  };
   A.openProfileSheet = openProfiles;
   $('btnProfile').onclick = openProfiles;
   $('psClose').onclick = () => A.closeOverlay(ps);
   ps.addEventListener('click', (e) => { if (e.target === ps) A.closeOverlay(ps); });
+  $('btnUpdateProfile').onclick = () => {
+    const pr = curProfile();
+    if (!pr || pr.builtin) return;
+    A.updateCustomProfile(pr.id, A.currentLook());
+    renderProfiles(); updateChips();
+    A.toast('已更新色彩檔案「' + pr.name + '」');
+  };
+  $('btnRevertProfile').onclick = () => {
+    const pr = curProfile();
+    if (!pr) return;
+    A.applyProfile(pr.id);
+    if (pctrl) pctrl.refresh();
+    renderProfiles();
+  };
   $('btnSaveProfile').onclick = () => {
     const name = $('profileName').value.trim();
     if (!name) { A.toast('請輸入檔案名稱'); return; }
@@ -236,6 +284,9 @@ A.initLookUI = () => {
     const lb = A.profileLabel();
     A.setIcon($('btnProfile'), 'filter', '色彩檔案:' + lb);
     $('btnProfile').classList.toggle('on', lb !== '標準');
+    const l = A.currentLook();
+    A.setIcon($('btnColor'), 'wb', '白平衡:' + A.wbLabel(l));
+    $('btnColor').classList.toggle('on', !A.wbIsDefault(l));
   }
   A.updateProfileChip = updateChips;
   document.addEventListener('lookchange', updateChips);
