@@ -60,7 +60,7 @@ document.querySelectorAll('#segFps button').forEach((b) => {
 
 /* ------------------------------------------------------------------ 錄製(原生 Camera2 + 硬體編碼) */
 
-let t0 = 0, timer = null, nativeRec = false;
+let t0 = 0, timer = null, nativeRec = false, recBase = 0;
 
 function tick() {
   const s = Math.floor((performance.now() - t0) / 1000);
@@ -72,7 +72,7 @@ A.nativeVideoZoom = () => {
   if (!nativeRec) return;
   const L = S.lens[S.lensKey];
   const base = L && L.base ? L.base : (L ? L.ratio : 1);
-  const z = Math.max(1, S.Z / base);
+  const z = Math.max(1, S.Z / (recBase || base));
   A.needNative().setVideoZoom({ zoom: z }).catch(() => {});
 };
 
@@ -83,18 +83,20 @@ async function start() {
   const st = A.settings, r = RES[st.videoRes] || RES['4K'];
   const rect = $('frame').getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  const base = L.base ? L.base : L.ratio;
+  // 隱藏的望遠(nativeId)直接用實體鏡頭錄影;倍率以該鏡頭的光學倍率為基準
+  let camId = L.nativeId ? String(L.nativeId) : String(L.dev.id);
+  let base = L.nativeId ? L.ratio : (L.base ? L.base : L.ratio);
   A.busy = true;
   A.hud('準備錄影', '切換為原生錄影…');
-  // WebView 必須先釋放鏡頭,Camera2 才能獨占
+  // WebView / 原生預覽都必須先釋放鏡頭,Camera2 錄影才能獨占
   A.stopStream();
+  if (S.nativePrev) await A.stopNativePrev();
   await new Promise((res) => setTimeout(res, 250));
   document.documentElement.classList.add('native-rec');
   let info;
-  try {
-    info = await N.startNativeVideo({
+  const opts = () => ({
       ois: A.settings.ois !== false,
-      cameraId: String(L.dev.id),
+      cameraId: camId,
       width: r.w, height: r.h, fps: st.videoFps,
       bitrate: Math.round(r.bps * (st.videoFps >= 60 ? 1.5 : 1)),
       audio: true,
@@ -102,7 +104,18 @@ async function start() {
       left: Math.round(rect.left * dpr), top: Math.round(rect.top * dpr),
       w: Math.round(rect.width * dpr), h: Math.round(rect.height * dpr),
       zoom: Math.max(1, S.Z / base),
-    });
+  });
+  try {
+    try {
+      info = await N.startNativeVideo(opts());
+    } catch (e) {
+      if (!L.nativeId) throw e;
+      // 望遠鏡頭無法錄影 → 退回主鏡頭數位放大
+      A.toast('望遠鏡頭無法錄影(' + A.errMsg(e) + '),改用主鏡頭數位放大', 5000);
+      camId = String(L.dev.id);
+      base = L.base ? L.base : 1;
+      info = await N.startNativeVideo(opts());
+    }
   } catch (e) {
     document.documentElement.classList.remove('native-rec');
     A.busy = false; A.hudHide();
@@ -110,11 +123,13 @@ async function start() {
     throw e;
   }
   nativeRec = true;
+  recBase = base;
+  S.recWarned = false;
   S.recording = true;
   A.busy = false;
   A.hudHide();
   const got = info.width + '×' + info.height + ' @' + info.fps + 'fps' + (info.audio ? '' : '(無聲)');
-  A.toast('原生錄影 ' + got + (info.note ? ' — ' + info.note : ''), info.note ? 6000 : 2500);
+  A.toast('原生錄影 ' + (L.nativeId && camId === String(L.nativeId) ? '望遠#' + camId + ' ' : '') + got + (info.note ? ' — ' + info.note : ''), info.note ? 6000 : 2500);
   t0 = performance.now();
   $('recBadge').hidden = false;
   tick();

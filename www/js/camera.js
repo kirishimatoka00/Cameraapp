@@ -219,7 +219,7 @@ A.startLens = async (key) => {
   if (S.nativePrev) await stopNativePrev();
   if (S.lensKey !== key) S.lastFocus = null;
   stopStream();
-  if (L.nativeId && S.mode !== 'video' && A.settings.nativePreview !== false && !A.forceWeb) {
+  if (L.nativeId && A.settings.nativePreview !== false && !A.forceWeb) {   // 影片模式也用真正的望遠預覽
     S.lensKey = key;
     S.caps = {};
     S.within = Math.max(1, S.Z / L.ratio);
@@ -420,12 +420,19 @@ A.applyPreviewZoom = () => {
 A.setZoom = async (Z, allowSwitch) => {
   Z = clamp(Z, minZoom(), MAX_ZOOM);
   S.Z = Z;
+  if (allowSwitch && S.recording && !A.settings.lensLock && !S.recWarned) {
+    const want = chooseLens(Z);
+    if (want && want !== S.lensKey) {
+      S.recWarned = true;
+      A.toast('錄影中無法切換實體鏡頭(會中斷錄影),此段改為數位變焦;要用 2× 望遠請先切到 2× 再開始錄影', 4500);
+    }
+  }
   if (allowSwitch && !S.switching && !A.busy && !S.recording) {
     const key = (A.settings.lensLock && S.lensKey && S.lens[S.lensKey]) ? S.lensKey : chooseLens(Z);   // 鎖定時不自動換鏡頭
     if (key && key !== S.lensKey) {
       S.switching = true;
       const cur = S.lens[S.lensKey];
-      const nativeSwitch = A.settings.nativePreview !== false && S.mode !== 'video' && (S.lens[key].nativeId || (cur && cur.nativeId));
+      const nativeSwitch = A.settings.nativePreview !== false && (S.lens[key].nativeId || (cur && cur.nativeId));
       if (cur && S.lens[key].dev === cur.dev && S.stream && !nativeSwitch) {
         S.lensKey = key;            // 虛擬望遠與主鏡頭共用預覽,不必重開串流
         updateLensTag();
